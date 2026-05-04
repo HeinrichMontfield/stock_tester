@@ -46,8 +46,8 @@ def get_stock_code_name(basic_info_df):
     return basic_info_df.loc[0, "code_name"]
 
 
-def save_fig_to_data_analyzed(fig, filename):
-    """Save a plotly figure to the DATA_ANALYZED_FILEPATH directory.
+def save_fig_to_data_analyzed(fig, filename, output_dir=None):
+    """Save a plotly figure to the specified directory (or DATA_ANALYZED_FILEPATH by default).
 
     Parameters:
     -----------
@@ -55,8 +55,11 @@ def save_fig_to_data_analyzed(fig, filename):
         The figure to save.
     filename : str
         The output filename (e.g. 'chart.html').
+    output_dir : str, optional
+        Custom output directory. Defaults to DATA_ANALYZED_FILEPATH.
     """
-    os.makedirs(DATA_ANALYZED_FILEPATH, exist_ok=True)
-    filepath = os.path.join(DATA_ANALYZED_FILEPATH, filename)
+    target_dir = output_dir if output_dir else DATA_ANALYZED_FILEPATH
+    os.makedirs(target_dir, exist_ok=True)
+    filepath = os.path.join(target_dir, filename)
     fig.write_html(filepath)
     print(f"Chart saved to {filepath}")

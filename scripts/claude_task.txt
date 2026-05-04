@@ -1,0 +1,89 @@
+检查 start_monitor 启动的邮件监听。为什么日志一直停留在 “(venv_baostock) mac@macdeMac-mini scripts %>sh ./mail/start_monitor.sh                                  [130]
+[start_monitor.sh] Starting stockmail_central...
+[Main] Email monitor started (IDLE mode)
+[Main] Connected to 163 IMAP server successfully
+[Main] Waiting for new emails (IDLE)...”。尽管我在 warden778877@163.com 中自己向自己发送了一封内容为“分析全部持仓股票kdj指标” （.env 中 TRIGGER_KEYWORD=分析全部持仓股票kdj指标）的邮件，但是日志没有触发后续流程？
+
+豆包给出的答案是：
+idle_loop 中 IDLE 模式的响应处理不完整：
+idle_listen 仅发送 IDLE 指令但未正确处理服务端响应；
+循环中仅靠 time.time() - start_idle < IDLE_TIMEOUT 轮询，未及时响应新邮件的 EXISTS/RECENT 信号；
+未处理 IDLE 超时后重新进入 IDLE 模式的逻辑。
+（3）未读邮件检查时机问题
+仅在 IDLE 模式启动前检查一次未读邮件，若 IDLE 期间新邮件到达但响应处理失败，会漏检。
+
+```
+def idle_listen(mail):
+    """IMAP IDLE 模式监听新邮件（修复响应处理）"""
+    try:
+        # 发送 IDLE 指令并确认服务端响应
+        mail.send(b"IDLE\r\n")
+        resp = mail.readline()
+        if resp and b"OK" in resp:
+            return True
+        return False
+    except Exception as e:
+        print(f"[Main] IDLE mode failed: {str(e)}")
+        return False
+
+def idle_loop():
+    """主循环：持续监听邮件（修复IDLE逻辑）"""
+    global _current_mail
+    print("[Main] Email monitor started (IDLE mode)")
+    while True:
+        mail = connect()
+        if not mail:
+            print("[Main] Reconnect after 60s...")
+            time.sleep(60)
+            continue
+
+        _current_mail = mail
+
+        try:
+            while True:
+                # 第一步：先检查所有未读邮件（关键：每次循环都检查）
+                unread = check_unread(mail)
+                if unread:
+                    print(f"[Main] Found {len(unread)} unread emails")
+                    for mid in unread:
+                        process_new_mail(mail, mid)
+                
+                # 第二步：进入 IDLE 模式监听新邮件
+                print("[Main] Waiting for new emails (IDLE)...")
+                if not idle_listen(mail):  # 启动IDLE模式
+                    break
+
+                # 持续监听 IDLE 响应，直到超时或有新邮件
+                idle_start = time.time()
+                mail_fd = mail.socket().fileno()
+                while time.time() - idle_start < IDLE_TIMEOUT:
+                    # 使用 select 监听socket，避免阻塞
+                    import select
+                    read_list, _, _ = select.select([mail_fd], [], [], 5)
+                    if read_list:
+                        resp = mail.readline()
+                        if resp:
+                            resp = resp.lower()
+                            # 检测到新邮件信号
+                            if b"exists" in resp or b"recent" in resp:
+                                print(f"[Main] New email signal detected: {resp.strip()}")
+                                mail.send(b"DONE\r\n")  # 退出IDLE
+                                mail.readline()  # 读取DONE响应
+                                break
+                else:
+                    # IDLE 超时，退出IDLE并重新循环
+                    mail.send(b"DONE\r\n")
+                    mail.readline()
+
+        except Exception as e:
+            print(f"[Main] Connection lost: {str(e)}")
+            try:
+                mail.logout()
+            except:
+                pass
+            _current_mail = None
+            print("[Main] Reconnect after 30s...")
+            time.sleep(30)
+```
+
+分析豆包给出的修改是否正确？如果正确，请你直接修改本地的代码。

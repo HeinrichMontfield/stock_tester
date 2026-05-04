@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 
+import os
+import sys
+
 import baostock as bs
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from dotenv import load_dotenv
 
 from scripts.database_ops.db_requestdata import get_stock_basic, get_stock_kline
 
@@ -187,6 +191,24 @@ def plot_stock_with_kdj(df, stock_name="sz.002050"):
 
 
 def main():
+    if len(sys.argv) < 2:
+        print("Error: output_folder argument is required", file=sys.stderr)
+        sys.exit(1)
+
+    output_folder = sys.argv[1]
+
+    load_dotenv()
+    html_output_folder = os.getenv("HTML_OUTPUT_FOLDER")
+    if not html_output_folder:
+        print("Error: HTML_OUTPUT_FOLDER not set in .env", file=sys.stderr)
+        sys.exit(1)
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if not os.path.isabs(html_output_folder):
+        html_output_folder = os.path.join(project_root, html_output_folder)
+
+    target_dir = os.path.join(html_output_folder, output_folder)
+
     stock_code = "sz.002050"
 
     print(f"Fetching data for {stock_code}...")
@@ -195,7 +217,7 @@ def main():
 
     if df is None or df.empty:
         print("Data fetch failed")
-        return
+        sys.exit(1)
 
     print(f"Successfully obtained {len(df)} records")
     print(f"Data date range: {df['date'].min()} to {df['date'].max()}")
@@ -211,11 +233,11 @@ def main():
     print("\nGenerating chart...")
     fig = plot_stock_with_kdj(df, stock_name)
 
-    from utils.stock_custom_utils import save_fig_to_data_analyzed
+    from scripts.utils.stock_custom_utils import save_fig_to_data_analyzed
 
     safe_name = stock_name if stock_name else stock_code.replace(".", "_")
     filename = f"{safe_name}_{stock_code.replace('.', '_')}_kdj.html"
-    save_fig_to_data_analyzed(fig, filename)
+    save_fig_to_data_analyzed(fig, filename, output_dir=target_dir)
 
 
 if __name__ == "__main__":
