@@ -186,7 +186,6 @@ def process_new_mail(mail, mail_id):
                 pass
 
         print(f"[Main] New email arrived: {subject}")
-        print(f"[Main] Email body:\n{body}")
 
         # 标题前缀检查 + 关键词检查
         if SUBJECT_PREFIX and not subject.startswith(SUBJECT_PREFIX):
@@ -194,8 +193,14 @@ def process_new_mail(mail, mail_id):
             return
 
         if TRIGGER_KEYWORD in subject or TRIGGER_KEYWORD in body:
+            print(f"[Main] Email body:\n{body}")
             print("[Main] Trigger keyword detected, start task execution")
             run_task()
+            try:
+                mail.store(mail_id, '+FLAGS', '\\Seen')
+                print(f"[Main] Mail {mail_id} marked as read")
+            except Exception as e:
+                print(f"[Main] Failed to mark mail {mail_id} as read: {e}")
         else:
             print("[Main] Trigger keyword not found in email")
 
