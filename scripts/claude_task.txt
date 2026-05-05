@@ -1,89 +1,43 @@
-检查 start_monitor 启动的邮件监听。为什么日志一直停留在 “(venv_baostock) mac@macdeMac-mini scripts %>sh ./mail/start_monitor.sh                                  [130]
-[start_monitor.sh] Starting stockmail_central...
-[Main] Email monitor started (IDLE mode)
-[Main] Connected to 163 IMAP server successfully
-[Main] Waiting for new emails (IDLE)...”。尽管我在 warden778877@163.com 中自己向自己发送了一封内容为“分析全部持仓股票kdj指标” （.env 中 TRIGGER_KEYWORD=分析全部持仓股票kdj指标）的邮件，但是日志没有触发后续流程？
+撰写代码实现计划，所有代码要实现在 scripts/news_monitor 中，实现一个后台一直运行的新闻抓取和分析，以及邮件发送功能脚本。要求包含如下功能。
+（1）设置要监控的关键词。例如 “伊朗，中东，原油，黄金”。关键词写在 @.env 文件中。以列表形式存储。
 
-豆包给出的答案是：
-idle_loop 中 IDLE 模式的响应处理不完整：
-idle_listen 仅发送 IDLE 指令但未正确处理服务端响应；
-循环中仅靠 time.time() - start_idle < IDLE_TIMEOUT 轮询，未及时响应新邮件的 EXISTS/RECENT 信号；
-未处理 IDLE 超时后重新进入 IDLE 模式的逻辑。
-（3）未读邮件检查时机问题
-仅在 IDLE 模式启动前检查一次未读邮件，若 IDLE 期间新邮件到达但响应处理失败，会漏检。
+（2）设置抓取目标为 “ 新浪财经-全球财经快讯” ，使用 akshare 的函数 ak.stock_info_global_sina() （位于 @scripts/akshare/akshare/stock_feature/stock_info.py）。
+akshare的文件夹路径在 scripts/akshare。如果有调用需求你可以自己创建 __init__.py 文件，以及其他的调用需要的配置。需要列在计划中。
 
-```
-def idle_listen(mail):
-    """IMAP IDLE 模式监听新邮件（修复响应处理）"""
-    try:
-        # 发送 IDLE 指令并确认服务端响应
-        mail.send(b"IDLE\r\n")
-        resp = mail.readline()
-        if resp and b"OK" in resp:
-            return True
-        return False
-    except Exception as e:
-        print(f"[Main] IDLE mode failed: {str(e)}")
-        return False
+（3）设置存储目标为 mongodb。单独存储一个数据库 stock_news
+ak.stock_info_global_sina() 能够获取的信息包含下面的内容：
+时间：发布时间（精确到分钟,所有时间都使用 UTC+8 时区）
+内容：新闻正文
+要求每条新闻都有一个用于存储和查询的 id key。id 通过时间生成，数据来源已经确保不同的新闻不会有重复的时间。id中需要带有"sina"，为了与以后其他形式的来源区分开。
+把这些内容存储到数据库的表中：包含时间，内容，以及该新闻是否已经邮件发送过。
 
-def idle_loop():
-    """主循环：持续监听邮件（修复IDLE逻辑）"""
-    global _current_mail
-    print("[Main] Email monitor started (IDLE mode)")
-    while True:
-        mail = connect()
-        if not mail:
-            print("[Main] Reconnect after 60s...")
-            time.sleep(60)
-            continue
+异常处理：如果正文为空，则不存储该新闻。
 
-        _current_mail = mail
+（4）实现通过 id 进行新闻基础信息和正文内容的获取，分别写一个接口。
+实现通过 title 搜素新闻是否在 mongo 数据库内已经存储的接口。
+所有抓取到的新的新闻，都要存储到 mongo 数据库中。
 
-        try:
-            while True:
-                # 第一步：先检查所有未读邮件（关键：每次循环都检查）
-                unread = check_unread(mail)
-                if unread:
-                    print(f"[Main] Found {len(unread)} unread emails")
-                    for mid in unread:
-                        process_new_mail(mail, mid)
-                
-                # 第二步：进入 IDLE 模式监听新邮件
-                print("[Main] Waiting for new emails (IDLE)...")
-                if not idle_listen(mail):  # 启动IDLE模式
-                    break
+（5）实现对数据库中存储的新闻正文的关键字搜索功能，例如 search_stock_news(keyword, start_time, end_time) 函数
+start_time 和 end_time 都以 yyyy-mm-dd-hh-mm-ss 形式传入。
+keyword 是关键词字符串。
+执行关键词搜索后，返回所有包含关键词的新闻id列表。
 
-                # 持续监听 IDLE 响应，直到超时或有新邮件
-                idle_start = time.time()
-                mail_fd = mail.socket().fileno()
-                while time.time() - idle_start < IDLE_TIMEOUT:
-                    # 使用 select 监听socket，避免阻塞
-                    import select
-                    read_list, _, _ = select.select([mail_fd], [], [], 5)
-                    if read_list:
-                        resp = mail.readline()
-                        if resp:
-                            resp = resp.lower()
-                            # 检测到新邮件信号
-                            if b"exists" in resp or b"recent" in resp:
-                                print(f"[Main] New email signal detected: {resp.strip()}")
-                                mail.send(b"DONE\r\n")  # 退出IDLE
-                                mail.readline()  # 读取DONE响应
-                                break
-                else:
-                    # IDLE 超时，退出IDLE并重新循环
-                    mail.send(b"DONE\r\n")
-                    mail.readline()
+（6）运行此 python 程序后，在运行开始时，以及后续每 10 分钟抓取一次新闻数据，并检查这些新闻 url id 是否已存在于 mongo 数据库中。
+如果不存在的话，那么就存储到 mongo 数据库中。
 
-        except Exception as e:
-            print(f"[Main] Connection lost: {str(e)}")
-            try:
-                mail.logout()
-            except:
-                pass
-            _current_mail = None
-            print("[Main] Reconnect after 30s...")
-            time.sleep(30)
-```
+（7）在每 10分钟抓取完新闻数据并存储后，检查 （1）中设置的关键词，进行全数据库搜索，然后在获取到的内容中，查找尚未邮件发送的新闻。
+如果存在未通过邮件发送的新闻，则进行发送。
 
-分析豆包给出的修改是否正确？如果正确，请你直接修改本地的代码。
+（8）组织邮件发送内容：
+标题：[关键词(如果有多个关键词则用'-'连接)]-[本次新闻抓取的时间（精确到分钟）] 
+邮件正文：
+新闻时间 \r\n 新闻正文 \r\n。逐项排列
+
+（9）发送邮件到 @.env EMAIL 指定的邮箱。发送邮件的函数可以参考 @scripts/mail/stockmail_central.py.py
+如果能生成公用函数，可以提取到一个新建文件 @scripts/mail/mail_utils.py 中。
+
+（10）实现启动脚本 start_news_monitor.sh ，启动监控的 python 程序。
+参考 @scripts/mail/start_mail_monitor.sh 以及它调用的 python 程序，注意处理 sh 脚本 ctrl+c 退出时清理干净资源占用。
+
+要求每一步操作都有可查询的 print 日志输出，以及对各种请求失败的情况，也要有 print 日志输出。
+

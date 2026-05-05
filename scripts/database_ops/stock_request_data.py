@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+# 获取股票数据并存入数据库的测试用例
 
 import os
 import sys

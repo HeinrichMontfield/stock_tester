@@ -22,3 +22,5 @@ mongodb-data/
 
 node_modules/
 .DS_Store
+
+_keywords_state.json

@@ -1,14 +1,21 @@
 # -*- coding: utf-8 -*-
 
+# 获取数据库中股票数据的各类接口
+
+import os
+
 import baostock as bs
+from dotenv import load_dotenv
 import pandas as pd
 from pymongo import MongoClient
 from datetime import datetime
 
-client = MongoClient("mongodb://localhost:27017/")
-db = client["stock_db"]
-col_basic = db["stock_basic"]
-col_kline = db["stock_kline"]
+load_dotenv()
+
+client = MongoClient(os.getenv("MONGO_URI"))
+db = client[os.getenv("STOCK_DB_NAME")]
+col_basic = db[os.getenv("STOCK_BASIC_COLLECTION")]
+col_kline = db[os.getenv("STOCK_KLINE_COLLECTION")]
 
 
 def get_stock_basic(code):

@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 
+import os
 
+from dotenv import load_dotenv
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, PyMongoError
 
+load_dotenv()
+
 # 连接 MongoDB
 try:
-    client = MongoClient("mongodb://localhost:27017/")
+    client = MongoClient(os.getenv("MONGO_URI"))
     # 测试连接是否真正可用
     client.admin.command('ping')
 except ConnectionFailure:
