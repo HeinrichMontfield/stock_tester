@@ -1,0 +1,3 @@
+[submodule "scripts/akshare"]
+	path = scripts/akshare
+	url = git@github-heinrich:HeinrichMontfield/akshare.git
