@@ -58,6 +58,16 @@ def _is_market_hours(market_start: str, market_end: str) -> bool:
     return _parse_minutes(market_start) <= current_minutes < _parse_minutes(market_end)
 
 
+def _seconds_until_market_start(market_start: str) -> int:
+    """Seconds until next market_start in UTC+8. 0 if already past."""
+    now = datetime.now(TZ_UTC8)
+    h, m = market_start.strip().split(":")
+    target = now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+    if now >= target:
+        target += timedelta(days=1)
+    return int((target - now).total_seconds())
+
+
 def main():
     global running
 
@@ -122,7 +132,14 @@ def main():
             break
 
         in_market = _is_market_hours(market_start, market_end)
-        interval = INTERVAL_MARKET if in_market else INTERVAL_OFF_HOURS
+        if in_market:
+            interval = INTERVAL_MARKET
+        else:
+            interval = INTERVAL_OFF_HOURS
+            seconds_to_start = _seconds_until_market_start(market_start)
+            if seconds_to_start < interval:
+                interval = seconds_to_start
+
         for _ in range(interval):
             if not running:
                 break
