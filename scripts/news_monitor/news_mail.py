@@ -13,21 +13,27 @@ def build_email_subject(keywords: list[str], fetch_time: str) -> str:
     return f"[{kw_part}]-[{fetch_time}]"
 
 
-def build_email_body(news_list: list[dict]) -> str:
-    """Build plain-text email body from news items.
+def build_email_body(keywords: list[str], unsent_news: list[dict]) -> str:
+    """Build plain-text email body from news items, grouped by keyword.
 
+    Each keyword group starts with a【keyword】header, followed by its news items.
     Each item formatted as:
         news_time
         news_content
-    Separated by blank lines.
     """
     parts = []
-    for item in news_list:
-        t = item.get("time", "")
-        if isinstance(t, datetime):
-            t = t.strftime("%Y-%m-%d %H:%M")
-        content = item.get("content", "")
-        parts.append(f"{t}\r\n{content}")
+    for kw in keywords:
+        matched = [n for n in unsent_news if kw in n.get("matched_keywords", [])]
+        if not matched:
+            continue
+        group = [f"【{kw}】"]
+        for item in matched:
+            t = item.get("time", "")
+            if isinstance(t, datetime):
+                t = t.strftime("%Y-%m-%d %H:%M")
+            content = item.get("content", "")
+            group.append(f"{t}\r\n{content}")
+        parts.append("\r\n\r\n".join(group))
     return "\r\n\r\n".join(parts)
 
 
@@ -42,7 +48,7 @@ def send_news_email(keywords: list[str], unsent_news: list[dict]) -> bool:
 
     fetch_time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     subject = build_email_subject(keywords, fetch_time)
-    body = build_email_body(unsent_news)
+    body = build_email_body(keywords, unsent_news)
 
     print(f"[news_mail] Sending email with {len(unsent_news)} news items")
     success = send_email(subject, body)

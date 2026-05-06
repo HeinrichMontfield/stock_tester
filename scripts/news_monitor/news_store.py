@@ -29,7 +29,6 @@ def init_db() -> None:
     """Ensure MongoDB indexes exist."""
     client, col = _get_collection()
     try:
-        col.create_index("_id", unique=True)
         col.create_index("email_sent")
         col.create_index("time")
         col.create_index("matched_keywords")
@@ -133,15 +132,38 @@ def search_by_content(keyword: str) -> list[dict]:
     finally:
         _close(client)
 
-
+# get_unsent_news() 和 get_unsent_news_since() 返回的是 MongoDB 完整文档，每个 item 都自带 matched_keywords 字段（如 ["keyword1", "keyword2"]）。
 def get_unsent_news() -> list[dict]:
     """Get all news items where email_sent is false."""
     client, col = _get_collection()
     try:
+        total = col.count_documents({})
+        with_false = col.count_documents({"email_sent": False})
+        with_nonempty = col.count_documents({"matched_keywords": {"$ne": []}})
+        both = col.count_documents({"email_sent": False, "matched_keywords": {"$ne": []}})
+        print(f"[news_store] get_unsent_news debug: total={total}, email_sent=False={with_false}, "
+              f"matched_nonempty={with_nonempty}, both={both}")
         cursor = col.find({"email_sent": False, "matched_keywords": {"$ne": []}})
         return list(cursor)
     except errors.PyMongoError as e:
         print(f"[news_store] Error getting unsent news: {e}")
+        return []
+    finally:
+        _close(client)
+
+
+def get_unsent_news_since(cutoff_time) -> list[dict]:
+    """Get unsent news with matched keywords since a cutoff time."""
+    client, col = _get_collection()
+    try:
+        cursor = col.find({
+            "email_sent": False,
+            "matched_keywords": {"$ne": []},
+            "time": {"$gte": cutoff_time},
+        })
+        return list(cursor)
+    except errors.PyMongoError as e:
+        print(f"[news_store] Error getting unsent news since {cutoff_time}: {e}")
         return []
     finally:
         _close(client)

@@ -8,7 +8,6 @@ from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
 import news_fetcher
-import news_query
 import news_store
 from news_mail import send_news_email
 
@@ -17,6 +16,7 @@ KEYWORDS_STATE_FILE = os.path.join(os.path.dirname(__file__), "_keywords_state.j
 SECONDS_PER_MINUTE = 60
 INTERVAL_MARKET = 10 * SECONDS_PER_MINUTE
 INTERVAL_OFF_HOURS = 120 * SECONDS_PER_MINUTE
+INTERVAL_FETCH = 10 * SECONDS_PER_MINUTE
 TZ_UTC8 = timezone(timedelta(hours=8))
 
 running = True
@@ -122,6 +122,8 @@ def main():
 
     print(f"[news_monitor] Configuration loaded. {len(keywords)} keywords")
 
+    last_email_time = None
+
     while running:
         try:
             news_items = news_fetcher.fetch_news()
@@ -132,25 +134,34 @@ def main():
                     news_store.save_news(item, keywords)
                     new_count += 1
 
-            matched_ids = set()
-            for kw in keywords:
-                now = time.strftime("%Y-%m-%d-%H-%M-%S")
-                past = time.strftime("%Y-%m-%d-00-00-00")
-                ids = news_query.search_stock_news(kw, past, now)
-                matched_ids.update(ids)
-
-            unsent_news = news_store.get_unsent_news()
-            send_count = len(unsent_news)
-            if unsent_news:
-                send_news_email(keywords, unsent_news)
-
             in_market = _is_market_hours(market_start, market_end)
-            interval = INTERVAL_MARKET if in_market else INTERVAL_OFF_HOURS
+            email_interval = INTERVAL_MARKET if in_market else INTERVAL_OFF_HOURS
+
+            now = datetime.now()
+            should_send = (last_email_time is None or
+                          (now - last_email_time).total_seconds() >= email_interval)
+
+            send_count = 0
+            if should_send:
+                is_first_run = last_email_time is None
+                print(f"[news_monitor] should_send=True, is_first_run={is_first_run}, in_market={in_market}")
+                if in_market or is_first_run:
+                    unsent_news = news_store.get_unsent_news()
+                else:
+                    cutoff = now - timedelta(seconds=INTERVAL_OFF_HOURS)
+                    unsent_news = news_store.get_unsent_news_since(cutoff)
+
+                send_count = len(unsent_news)
+                print(f"[news_monitor] unsent_news count: {send_count}")
+                if unsent_news:
+                    send_news_email(keywords, unsent_news)
+                last_email_time = now
+
             phase = "market" if in_market else "off-hours"
             print(
                 f"[news_monitor] Cycle complete [{phase}]: fetched={len(news_items)}, "
-                f"new={new_count}, matched={len(matched_ids)}, sent={send_count}, "
-                f"next_interval={interval}s"
+                f"new={new_count}, sent={send_count}, "
+                f"next_fetch={INTERVAL_FETCH}s"
             )
         except Exception as e:
             print(f"[news_monitor] Cycle error: {e}")
@@ -158,16 +169,7 @@ def main():
         if not running:
             break
 
-        in_market = _is_market_hours(market_start, market_end)
-        if in_market:
-            interval = INTERVAL_MARKET
-        else:
-            interval = INTERVAL_OFF_HOURS
-            seconds_to_start = _seconds_until_market_start(market_start)
-            if seconds_to_start < interval:
-                interval = seconds_to_start
-
-        for _ in range(interval):
+        for _ in range(INTERVAL_FETCH):
             if not running:
                 break
             time.sleep(1)
