@@ -68,6 +68,32 @@ def _seconds_until_market_start(market_start: str) -> int:
     return int((target - now).total_seconds())
 
 
+def _handle_keyword_change(keywords: list[str]):
+    """Handle newly added keywords.
+
+    Marks old (>12h) matched news as sent immediately to silence them.
+    Recent (<=12h) news are left unsent so the normal cycle picks them up
+    in a single combined email with any newly fetched items.
+    """
+    all_unsent = news_store.get_unsent_news()
+    if not all_unsent:
+        print("[news_monitor] Keyword change: no unsent news to process")
+        return
+
+    cutoff = datetime.now() - timedelta(hours=12)
+    old_ids = [n["_id"] for n in all_unsent
+               if n.get("time", datetime.min) < cutoff and "_id" in n]
+    recent_count = len(all_unsent) - len(old_ids)
+
+    if old_ids:
+        news_store.mark_email_sent(old_ids)
+        print(f"[news_monitor] Keyword change: silenced {len(old_ids)} older (>12h) news, "
+              f"leaving {recent_count} recent news for normal cycle")
+    else:
+        print(f"[news_monitor] Keyword change: all {recent_count} unsent news within 12h, "
+              f"left for normal cycle")
+
+
 def main():
     global running
 
@@ -91,6 +117,7 @@ def main():
     if prev_keywords is not None and prev_keywords != keywords:
         print(f"[news_monitor] Keywords changed: {prev_keywords} -> {keywords}")
         news_store.reindex_all_keywords(keywords)
+        _handle_keyword_change(keywords)
     _save_keywords_state(keywords)
 
     print(f"[news_monitor] Configuration loaded. {len(keywords)} keywords")

@@ -1,43 +1,98 @@
-撰写代码实现计划，所有代码要实现在 scripts/news_monitor 中，实现一个后台一直运行的新闻抓取和分析，以及邮件发送功能脚本。要求包含如下功能。
-（1）设置要监控的关键词。例如 “伊朗，中东，原油，黄金”。关键词写在 @.env 文件中。以列表形式存储。
-
-（2）设置抓取目标为 “ 新浪财经-全球财经快讯” ，使用 akshare 的函数 ak.stock_info_global_sina() （位于 @scripts/akshare/akshare/stock_feature/stock_info.py）。
-akshare的文件夹路径在 scripts/akshare。如果有调用需求你可以自己创建 __init__.py 文件，以及其他的调用需要的配置。需要列在计划中。
-
-（3）设置存储目标为 mongodb。单独存储一个数据库 stock_news
-ak.stock_info_global_sina() 能够获取的信息包含下面的内容：
-时间：发布时间（精确到分钟,所有时间都使用 UTC+8 时区）
-内容：新闻正文
-要求每条新闻都有一个用于存储和查询的 id key。id 通过时间生成，数据来源已经确保不同的新闻不会有重复的时间。id中需要带有"sina"，为了与以后其他形式的来源区分开。
-把这些内容存储到数据库的表中：包含时间，内容，以及该新闻是否已经邮件发送过。
-
-异常处理：如果正文为空，则不存储该新闻。
-
-（4）实现通过 id 进行新闻基础信息和正文内容的获取，分别写一个接口。
-实现通过 title 搜素新闻是否在 mongo 数据库内已经存储的接口。
-所有抓取到的新的新闻，都要存储到 mongo 数据库中。
-
-（5）实现对数据库中存储的新闻正文的关键字搜索功能，例如 search_stock_news(keyword, start_time, end_time) 函数
-start_time 和 end_time 都以 yyyy-mm-dd-hh-mm-ss 形式传入。
-keyword 是关键词字符串。
-执行关键词搜索后，返回所有包含关键词的新闻id列表。
-
-（6）运行此 python 程序后，在运行开始时，以及后续每 10 分钟抓取一次新闻数据，并检查这些新闻 url id 是否已存在于 mongo 数据库中。
-如果不存在的话，那么就存储到 mongo 数据库中。
-
-（7）在每 10分钟抓取完新闻数据并存储后，检查 （1）中设置的关键词，进行全数据库搜索，然后在获取到的内容中，查找尚未邮件发送的新闻。
-如果存在未通过邮件发送的新闻，则进行发送。
-
-（8）组织邮件发送内容：
-标题：[关键词(如果有多个关键词则用'-'连接)]-[本次新闻抓取的时间（精确到分钟）] 
-邮件正文：
-新闻时间 \r\n 新闻正文 \r\n。逐项排列
-
-（9）发送邮件到 @.env EMAIL 指定的邮箱。发送邮件的函数可以参考 @scripts/mail/stockmail_central.py.py
-如果能生成公用函数，可以提取到一个新建文件 @scripts/mail/mail_utils.py 中。
-
-（10）实现启动脚本 start_news_monitor.sh ，启动监控的 python 程序。
-参考 @scripts/mail/start_mail_monitor.sh 以及它调用的 python 程序，注意处理 sh 脚本 ctrl+c 退出时清理干净资源占用。
-
-要求每一步操作都有可查询的 print 日志输出，以及对各种请求失败的情况，也要有 print 日志输出。
-
+(venv_baostock) mac@macdeMac-mini scripts %>sh ./news_monitor/start_news_monitor.sh                                            [0]
+[start_news_monitor.sh] Starting news_monitor...
+[news_monitor] Starting news monitor...
+[news_monitor] Monitor keywords: ['伊朗', '中东', '原油', '黄金', '特朗普', '科创', '化工', '炼化', 'PTA', '聚酯', '恒力石化', '拓维信息', '稀土', '有色', '午评', '板块', '三花智控', '中国卫星', '西部材料', '利通电子', '中际旭创', '恒生科技', '科指', '沪指', '盘中']
+[news_monitor] Market hours: 09:00 - 15:00 (UTC+8)
+[news_store] Failed to create indexes: The field 'unique' is not valid for an _id index specification. Specification: { unique: true, name: "_id_1", key: { _id: 1 }, v: 2 }, full error: {'ok': 0.0, 'errmsg': 'The field \'unique\' is not valid for an _id index specification. Specification: { unique: true, name: "_id_1", key: { _id: 1 }, v: 2 }', 'code': 197, 'codeName': 'InvalidIndexSpecificationOption'}
+[news_monitor] Keywords changed: ['伊朗', '中东', '原油', '黄金', '特朗普', '科创', '化工', '炼化', 'PTA', '聚酯', '恒力石化', '拓维信息', '稀土', '有色', '导弹', '空袭', '机器人', '算力', '存储'] -> ['伊朗', '中东', '原油', '黄金', '特朗普', '科创', '化工', '炼化', 'PTA', '聚酯', '恒力石化', '拓维信息', '稀土', '有色', '午评', '板块', '三花智控', '中国卫星', '西部材料', '利通电子', '中际旭创', '恒生科技', '科指', '沪指', '盘中']
+[news_store] Reindexed matched_keywords for 678 documents
+[news_monitor] Keyword change: sending 24 recent news, skipping 1 older (>12h) news
+[mail_utils] Connecting to SMTP server smtp.qq.com:465...
+[mail_utils] SMTP SSL connection established
+[mail_utils] SMTP login successful
+[mail_utils] Email sent to 1638933536@qq.com
+[mail_utils] SMTP connection closed
+[news_store] Marked 25 news as email_sent
+[news_monitor] Keyword change: marked 25 news as sent
+[news_monitor] Configuration loaded. 25 keywords
+[news_fetcher] Fetching news from sina finance...
+[news_fetcher] Fetched 20 news items
+[news_store] Saved news sina_2026-05-06-20-24-48 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-24-42 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-24-38 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-24-34 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-24-26 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-23-35 with keywords: ['特朗普']
+[news_store] Saved news sina_2026-05-06-20-23-19 with keywords: ['原油', '盘中']
+[news_store] Saved news sina_2026-05-06-20-23-08 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-22-38 with keywords: ['伊朗']
+[news_store] Saved news sina_2026-05-06-20-22-31 with keywords: ['特朗普']
+[news_store] Saved news sina_2026-05-06-20-22-07 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-22-02 with keywords: ['伊朗']
+[news_store] Saved news sina_2026-05-06-20-21-51 with keywords: ['伊朗']
+[news_store] Saved news sina_2026-05-06-20-21-34 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-21-17 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-21-09 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-20-11 with keywords: ['特朗普']
+[news_store] Saved news sina_2026-05-06-20-19-58 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-19-49 with keywords: []
+[news_store] Saved news sina_2026-05-06-20-19-47 with keywords: ['伊朗']
+[news_query] Searching news: keyword='伊朗', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 38 matching news
+[news_query] Searching news: keyword='中东', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 14 matching news
+[news_query] Searching news: keyword='原油', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 12 matching news
+[news_query] Searching news: keyword='黄金', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 13 matching news
+[news_query] Searching news: keyword='特朗普', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 26 matching news
+[news_query] Searching news: keyword='科创', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 11 matching news
+[news_query] Searching news: keyword='化工', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 5 matching news
+[news_query] Searching news: keyword='炼化', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 0 matching news
+[news_query] Searching news: keyword='PTA', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 0 matching news
+[news_query] Searching news: keyword='聚酯', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 0 matching news
+[news_query] Searching news: keyword='恒力石化', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 0 matching news
+[news_query] Searching news: keyword='拓维信息', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 0 matching news
+[news_query] Searching news: keyword='稀土', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 1 matching news
+[news_query] Searching news: keyword='有色', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 1 matching news
+[news_query] Searching news: keyword='午评', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 2 matching news
+[news_query] Searching news: keyword='板块', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 17 matching news
+[news_query] Searching news: keyword='三花智控', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 0 matching news
+[news_query] Searching news: keyword='中国卫星', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 0 matching news
+[news_query] Searching news: keyword='西部材料', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 1 matching news
+[news_query] Searching news: keyword='利通电子', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 2 matching news
+[news_query] Searching news: keyword='中际旭创', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 2 matching news
+[news_query] Searching news: keyword='恒生科技', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 4 matching news
+[news_query] Searching news: keyword='科指', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 1 matching news
+[news_query] Searching news: keyword='沪指', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 1 matching news
+[news_query] Searching news: keyword='盘中', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
+[news_query] Found 13 matching news
+[news_mail] Sending email with 8 news items
+[mail_utils] Connecting to SMTP server smtp.qq.com:465...
+[mail_utils] SMTP SSL connection established
+[mail_utils] SMTP login successful
+[mail_utils] Email sent to 1638933536@qq.com
+[mail_utils] SMTP connection closed
+[news_store] Marked 8 news as email_sent
+[news_mail] Email sent and news marked as sent
+[news_monitor] Cycle complete [off-hours]: fetched=20, new=20, matched=132, sent=8, next_interval=7200s
