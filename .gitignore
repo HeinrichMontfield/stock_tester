@@ -4,6 +4,7 @@ lib/
 share/
 scripts/data_analyzed
 pyvenv.cfg
+*.workspace
 
 __pycache__/
 *.pyc
