@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 # 使用 plotly 绘制15分钟k线图，保存为 html 文件
 
+import json
 import os
+from datetime import datetime, timedelta
+
 import pandas as pd
 import plotly.graph_objects as go
 
 from scripts.utils import stock_logger
+from scripts.utils.stock_common_consts import A_STOCK_HOLIDAYS
 
 
 def _get_project_root():
@@ -34,6 +38,17 @@ def draw_stock_15min_history(stock_code, start_time=None, end_time=None):
     if not os.path.exists(csv_file):
         stock_logger.error("Stock %s: csv file not found at %s", stock_code, csv_file)
         return None
+
+    # 从 info.json 中获取股票简称
+    info_file = os.path.join(project_root, "data", "signal_catcher", f"{stock_code}_info.json")
+    stock_name = ""
+    if os.path.exists(info_file):
+        try:
+            with open(info_file, "r", encoding="utf-8") as f:
+                info = json.load(f)
+            stock_name = info.get("individual_info", {}).get("股票简称", "")
+        except (json.JSONDecodeError, KeyError) as e:
+            stock_logger.debug("Stock %s: failed to read stock name from info: %s", stock_code, str(e))
 
     try:
         df = pd.read_csv(csv_file)
@@ -66,11 +81,33 @@ def draw_stock_15min_history(stock_code, start_time=None, end_time=None):
         ]
     )
 
+    title_text = f"{stock_code}_{stock_name} 15min K-line" if stock_name else f"{stock_code} 15min K-line"
+
+    # 构建 rangebreaks: 周末 + 非交易时段 + A股节假日
+    rangebreaks = [
+        dict(bounds=["sat", "mon"]),  # remove weekend gaps
+        # 跨午夜的间断拆成两段：当日收盘→24点、0点→次日开市
+        dict(bounds=[15, 24], pattern="hour"),  # remove overnight: 15:00 to midnight
+        dict(bounds=[0, 9.5], pattern="hour"),  # remove overnight: midnight to 9:30
+        dict(bounds=[11.5, 13], pattern="hour"),  # remove lunch break gaps (11:30 to 13:00)
+    ]
+
+    # 有问题，会导致 html 空白
+    # 节假日：使用 values + dvalue 替代 bounds + pattern=""，
+    # 避免 plotly 对日期字符串 pattern 推断失败导致 html 空白。
+    # dvalue 单位毫秒，86400000 = 1 天，天数 = (结束-开始).days + 1（含首尾）
+    # for holiday_start, holiday_end in A_STOCK_HOLIDAYS:
+    #     start_dt = datetime.strptime(holiday_start, "%Y-%m-%d")
+    #     end_dt = datetime.strptime(holiday_end, "%Y-%m-%d")
+    #     holiday_days = (end_dt - start_dt).days + 1
+    #     rangebreaks.append(dict(values=[holiday_start], dvalue=holiday_days * 86400000))
+
     fig.update_layout(
-        title=f"{stock_code} 15min K-line",
+        title=title_text,
         xaxis_title="Time",
         yaxis_title="Price",
         xaxis_rangeslider_visible=False,
+        xaxis_rangebreaks=rangebreaks,
     )
 
     range_start = start_time or df["datetime"].iloc[0].strftime("%Y-%m-%d")
@@ -79,7 +116,12 @@ def draw_stock_15min_history(stock_code, start_time=None, end_time=None):
     html_path = os.path.join(temp_dir, html_filename)
 
     try:
-        fig.write_html(html_path)
+        fig.write_html(
+            html_path,
+            include_plotlyjs=True,
+            default_height="100vh",
+            default_width="100%",
+        )
     except Exception as e:
         stock_logger.error("Stock %s: failed to save html: %s", stock_code, str(e))
         return None
