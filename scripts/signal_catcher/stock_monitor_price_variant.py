@@ -3,9 +3,13 @@
 # 当股价相对当日开盘价涨跌幅超过阈值时，按阶梯档位发送告警邮件。
 
 import os
+import signal
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Ctrl+C 优雅退出标志
+_shutdown_requested = False
 
 # 修正 LOG_FOLDER 为绝对路径，确保日志写入项目根目录的 log/ 而非 CWD 下的 log/
 # 解决从 scripts/ 目录运行时日志路径偏移的问题
@@ -46,15 +50,20 @@ EMAIL = os.getenv("EMAIL")
 
 # ---------- 硬编码变量 ----------
 IS_SIMULATE_MODE = True
-START_SIMULATION_TIMESTAMP = "2026-03-19 09:30:00"
+START_SIMULATION_TIMESTAMP = "2026-03-24 09:30:00"
 MONITOR_INTERVAL_MINUTES = 10
-SIMULATE_SPEED_MULTIPLIER = 20
+SIMULATE_SPEED_MULTIPLIER = 200
 
 # ---------- 告警阶梯档位常量 ----------
-DOWN_ALERT_LEVELS = [-5, -7, -9]
-UP_ALERT_LEVELS = [5, 7, 9]
+# 基于 PRICE_VARIANT_THRESHOLD 生成阶梯档位（步长 2%），解决阈值未生效的问题
+_t = int(PRICE_VARIANT_THRESHOLD)
+DOWN_ALERT_LEVELS = [-_t, -(_t + 2), -(_t + 4)]
+UP_ALERT_LEVELS = [_t, _t + 2, _t + 4]
 
 DATA_SUBDIR = "signal_catcher"
+
+# 股票简称缓存，避免重复读取/请求
+_stock_short_name_cache = {}
 
 
 def _get_project_root():
@@ -68,6 +77,58 @@ def _get_data_dir():
     data_dir = os.path.join(_get_project_root(), "data", DATA_SUBDIR)
     os.makedirs(data_dir, exist_ok=True)
     return data_dir
+
+
+def _get_stock_short_name(stock_code):
+    """获取股票简称。
+
+    优先从 <code>_info.json 读取；实时模式下若不存在则调用 akshare
+    stock_individual_info_em 获取并缓存到 info.json。
+
+    Returns:
+        str: 股票简称，获取失败时返回 stock_code 本身
+    """
+    if stock_code in _stock_short_name_cache:
+        return _stock_short_name_cache[stock_code]
+
+    data_dir = _get_data_dir()
+    info_file = os.path.join(data_dir, f"{stock_code}_info.json")
+    try:
+        with open(info_file, "r", encoding="utf-8") as f:
+            info = json.load(f)
+        short_name = info.get("short_name")
+        if short_name:
+            _stock_short_name_cache[stock_code] = short_name
+            return short_name
+    except Exception:
+        pass
+
+    if not IS_SIMULATE_MODE:
+        try:
+            df = ak.stock_individual_info_em(symbol=stock_code)
+            row = df[df["item"] == "股票简称"]
+            if not row.empty:
+                short_name = str(row.iloc[0]["value"])
+                _stock_short_name_cache[stock_code] = short_name
+                try:
+                    with open(info_file, "r", encoding="utf-8") as f:
+                        info = json.load(f)
+                except Exception:
+                    info = {}
+                info["short_name"] = short_name
+                try:
+                    with open(info_file, "w", encoding="utf-8") as f:
+                        json.dump(info, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                return short_name
+        except Exception as e:
+            stock_logger.error(
+                "[short_name] Failed to fetch for %s: %s", stock_code, str(e)
+            )
+
+    _stock_short_name_cache[stock_code] = stock_code
+    return stock_code
 
 
 def request_stock_15min_data(stock_code, timestamp=None):
@@ -228,27 +289,30 @@ def save_15min_data_to_mongo(data_dict):
             client.close()
 
 
-def _get_today_open(stock_code, data_dict):
+def _get_today_open(stock_code, data_dict, query_date=None):
     """获取当日开盘价。
 
     Args:
         stock_code: 股票代码
-        data_dict: 请求到的当前数据条（用于获取当天日期）
+        data_dict: 请求到的当前数据条
+        query_date: 查询日期（yyyy-mm-dd），模拟模式传入当前时间戳的日期，
+                    避免数据日期与查询日期不一致时取到错误的开盘价
 
     Returns:
         float | None: 当日开盘价
     """
     if IS_SIMULATE_MODE:
-        return _get_today_open_from_csv(stock_code, data_dict)
+        return _get_today_open_from_csv(stock_code, data_dict, query_date)
     else:
         return _get_today_open_realtime(stock_code, data_dict)
 
 
-def _get_today_open_from_csv(stock_code, data_dict):
+def _get_today_open_from_csv(stock_code, data_dict, query_date=None):
     data_dir = _get_data_dir()
     csv_file = os.path.join(data_dir, f"{stock_code}_data.csv")
-    # 提取当天日期
-    data_date = data_dict["datetime"][:10]
+    # 优先使用 query_date（查询时间戳的日期），避免模拟模式下跨日期时
+    # 数据仍是前一日但 query_date 已是新日期，取到错误的开盘价
+    data_date = query_date if query_date else data_dict["datetime"][:10]
     try:
         df = pd.read_csv(csv_file)
         df["datetime"] = pd.to_datetime(df["datetime"])
@@ -398,28 +462,28 @@ def evaluate_alert(stock_code, variant_pct, alert_state, today_open):
     over_flag = alert_state.get("over_5pct_flag")
     last_level = alert_state.get("last_alerted_level")
 
-    # ---- 首次穿越 ±5% 边界 ----
+    # ---- 首次穿越阈值边界 ----
     if over_flag is None:
-        if variant_pct <= -5:
+        if variant_pct <= DOWN_ALERT_LEVELS[0]:
             alert_state["over_5pct_flag"] = "down"
-            alert_state["last_alerted_level"] = -5
-            reason = f"首次下跌超5%%，当前涨跌幅 {variant_pct:+.2f}%%"
+            alert_state["last_alerted_level"] = DOWN_ALERT_LEVELS[0]
+            reason = f"首次下跌超{abs(DOWN_ALERT_LEVELS[0])}%%，当前涨跌幅 {variant_pct:+.2f}%%"
             stock_logger.debug(
-                "[alert] stock=%s first down cross, variant=%.2f%%, flag=down, level=-5",
-                stock_code, variant_pct,
+                "[alert] stock=%s first down cross, variant=%.2f%%, flag=down, level=%d",
+                stock_code, variant_pct, DOWN_ALERT_LEVELS[0],
             )
             return reason, alert_state
-        elif variant_pct >= 5:
+        elif variant_pct >= UP_ALERT_LEVELS[0]:
             alert_state["over_5pct_flag"] = "up"
-            alert_state["last_alerted_level"] = 5
-            reason = f"首次上涨超5%%，当前涨跌幅 {variant_pct:+.2f}%%"
+            alert_state["last_alerted_level"] = UP_ALERT_LEVELS[0]
+            reason = f"首次上涨超{UP_ALERT_LEVELS[0]}%%，当前涨跌幅 {variant_pct:+.2f}%%"
             stock_logger.debug(
-                "[alert] stock=%s first up cross, variant=%.2f%%, flag=up, level=+5",
-                stock_code, variant_pct,
+                "[alert] stock=%s first up cross, variant=%.2f%%, flag=up, level=+%d",
+                stock_code, variant_pct, UP_ALERT_LEVELS[0],
             )
             return reason, alert_state
         else:
-            # |variant_pct| < 5，清除 last_alerted_level（保持 over_5pct_flag 为 None）
+            # |variant_pct| < 阈值，清除 last_alerted_level（保持 over_5pct_flag 为 None）
             if last_level is not None:
                 alert_state["last_alerted_level"] = None
             return None, alert_state
@@ -450,7 +514,7 @@ def evaluate_alert(stock_code, variant_pct, alert_state, today_open):
     if over_flag == "down" and variant_pct > 0:
         # 已从下跌转为上涨（但尚未触发回归），由回归逻辑在前一步处理，此处为防御性代码
         current_level = _determine_current_level(variant_pct)
-        if current_level is not None and current_level >= 5:
+        if current_level is not None and current_level >= UP_ALERT_LEVELS[0]:
             stock_logger.debug(
                 "[alert] stock=%s direction switch down->up, variant=%.2f%%", stock_code, variant_pct,
             )
@@ -461,7 +525,7 @@ def evaluate_alert(stock_code, variant_pct, alert_state, today_open):
         return None, alert_state
     if over_flag == "up" and variant_pct < 0:
         current_level = _determine_current_level(variant_pct)
-        if current_level is not None and current_level <= -5:
+        if current_level is not None and current_level <= DOWN_ALERT_LEVELS[0]:
             stock_logger.debug(
                 "[alert] stock=%s direction switch up->down, variant=%.2f%%", stock_code, variant_pct,
             )
@@ -475,13 +539,20 @@ def evaluate_alert(stock_code, variant_pct, alert_state, today_open):
     current_level = _determine_current_level(variant_pct)
 
     if current_level is None:
-        # 回到 ±5% 以内，清零 last_alerted_level，但保持 over_5pct_flag
-        if last_level is not None:
+        # 回到阈值以内：只有当 over_5pct_flag 也为 None 时才清零 last_alerted_level。
+        # 如果 over_5pct_flag 仍在（首次穿越后的阈值内振荡），保留 last_alerted_level，
+        # 防止再次穿越阈值时重复告警（需求 L320：只有彻底回归才清零，为下一轮穿越做准备）。
+        if last_level is not None and alert_state.get("over_5pct_flag") is None:
             stock_logger.debug(
-                "[alert] stock=%s back within 5%% (variant=%.2f%%), resetting last_alerted_level",
+                "[alert] stock=%s back within threshold (variant=%.2f%%), resetting last_alerted_level",
                 stock_code, variant_pct,
             )
             alert_state["last_alerted_level"] = None
+        elif last_level is not None:
+            stock_logger.debug(
+                "[alert] stock=%s back within threshold but over_5pct_flag=%s, variant=%.2f%%, keeping last_alerted_level=%s",
+                stock_code, alert_state.get("over_5pct_flag"), variant_pct, last_level,
+            )
         return None, alert_state
 
     if last_level is None:
@@ -517,7 +588,8 @@ def evaluate_alert(stock_code, variant_pct, alert_state, today_open):
     return None, alert_state
 
 
-def send_alert_email(stock_code, alert_reason, variant_pct, data_dict, today_open):
+def send_alert_email(stock_code, stock_short_name, alert_reason, variant_pct,
+                     data_dict, today_open):
     """发送告警邮件。
 
     Returns:
@@ -525,9 +597,13 @@ def send_alert_email(stock_code, alert_reason, variant_pct, data_dict, today_ope
     """
     from scripts.mail.mail_utils import send_email
 
-    subject = f"[Stock Alert] {stock_code} price variant {variant_pct:+.2f}%"
+    subject = (
+        f"[Stock Alert] {stock_code}({stock_short_name}) "
+        f"price variant {variant_pct:+.2f}%"
+    )
     body_lines = [
         f"股票代码: {stock_code}",
+        f"股票简称: {stock_short_name}",
         f"当前价格: {data_dict['close']}",
         f"开盘价: {today_open}",
         f"涨跌幅: {variant_pct:+.2f}%",
@@ -630,7 +706,11 @@ def _should_monitor_run():
             now.strftime("%Y-%m-%d %H:%M:%S"),
         )
         _should_monitor_run._wait_logged = True
-    time.sleep(60)
+    # 可中断的 sleep，每秒检查一次退出标志
+    for _ in range(60):
+        if _shutdown_requested:
+            break
+        time.sleep(1)
     return False
 
 
@@ -699,7 +779,7 @@ def _run_simulate_loop(alert_states):
     last_market_date = None
     max_rounds = 50000  # 安全上限，防止死循环
 
-    while round_count < max_rounds:
+    while round_count < max_rounds and not _shutdown_requested:
         round_count += 1
 
         # 收盘重置：检测是否跨入新交易日
@@ -720,6 +800,8 @@ def _run_simulate_loop(alert_states):
 
         all_finished = True
         for stock_code in MONITOR_STOCK_CODES:
+            if _shutdown_requested:
+                break
             if stock_code in finished_stocks:
                 continue
 
@@ -738,7 +820,8 @@ def _run_simulate_loop(alert_states):
             all_finished = False
             last_data_timestamps[stock_code] = current_timestamp
 
-            today_open = _get_today_open(stock_code, data)
+            today_open = _get_today_open(stock_code, data,
+                                          query_date=current_timestamp.strftime("%Y-%m-%d"))
             if today_open is None:
                 continue
 
@@ -751,7 +834,10 @@ def _run_simulate_loop(alert_states):
             )
 
             if alert_reason is not None:
-                send_alert_email(stock_code, alert_reason, variant_pct, data, today_open)
+                stock_short_name = _get_stock_short_name(stock_code)
+                send_alert_email(
+                    stock_code, stock_short_name, alert_reason, variant_pct, data, today_open,
+                )
 
         if all_finished and len(finished_stocks) >= len(MONITOR_STOCK_CODES):
             stock_logger.debug(
@@ -767,7 +853,14 @@ def _run_simulate_loop(alert_states):
         current_timestamp += timedelta(minutes=MONITOR_INTERVAL_MINUTES)
         current_timestamp = _get_next_trading_timestamp(current_timestamp)
 
-        time.sleep(30)
+        # 模拟加速：实际间隔 / 加速倍数 = sleep 秒数
+        # e.g. 10min * 60 / 80 = 7.5s 每轮
+        sleep_seconds = (MONITOR_INTERVAL_MINUTES * 60) / SIMULATE_SPEED_MULTIPLIER
+        if sleep_seconds > 0.01:
+            for _ in range(int(sleep_seconds)):
+                if _shutdown_requested:
+                    break
+                time.sleep(1)
 
 
 def _run_realtime_loop(alert_states):
@@ -775,6 +868,9 @@ def _run_realtime_loop(alert_states):
     was_in_market = False
 
     while True:
+        if _shutdown_requested:
+            stock_logger.debug("[monitor] Shutdown requested, exiting realtime loop")
+            break
         if not _should_monitor_run():
             if was_in_market:
                 stock_logger.debug("Market closed, monitoring paused")
@@ -796,6 +892,8 @@ def _run_realtime_loop(alert_states):
             _reset_alert_states(alert_states)
 
         for stock_code in MONITOR_STOCK_CODES:
+            if _shutdown_requested:
+                break
             try:
                 data = request_stock_15min_data(stock_code)
                 if data is None:
@@ -816,14 +914,31 @@ def _run_realtime_loop(alert_states):
                 )
 
                 if alert_reason is not None:
-                    send_alert_email(stock_code, alert_reason, variant_pct, data, today_open)
+                    stock_short_name = _get_stock_short_name(stock_code)
+                    send_alert_email(
+                        stock_code, stock_short_name, alert_reason, variant_pct, data, today_open,
+                    )
             except Exception as e:
                 stock_logger.error(
                     "[monitor] Unexpected error for stock=%s, mode=REAL: %s",
                     stock_code, str(e),
                 )
 
-        time.sleep(MONITOR_INTERVAL_MINUTES * 60)
+        # 可中断的 sleep，每 1 秒检查一次退出标志
+        for _ in range(int(MONITOR_INTERVAL_MINUTES * 60)):
+            if _shutdown_requested:
+                break
+            time.sleep(1)
+
+
+def _setup_signal_handlers():
+    def handler(sig, frame):
+        global _shutdown_requested
+        _shutdown_requested = True
+        stock_logger.debug("[monitor] Received signal %s, shutting down gracefully...", sig)
+
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
 
 
 def main():
@@ -837,6 +952,7 @@ def main():
         ))
         _logger.addHandler(console)
 
+    _setup_signal_handlers()
     run_stock_monitor_price_variant()
 
 
