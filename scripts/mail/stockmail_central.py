@@ -16,6 +16,8 @@ from email import encoders
 from datetime import datetime
 from dotenv import load_dotenv
 
+from scripts.utils import stock_logger
+
 # 加载环境变量
 load_dotenv()
 
@@ -30,10 +32,10 @@ ZIP_FILE_NAME = os.getenv("ZIP_FILE_NAME", "kdj_result.zip")
 WORKER_SCRIPT = os.path.join(os.path.dirname(__file__), "stockmail_kdj_worker.py")
 
 # 打印关键配置（调试用，上线后可删除）
-print(f"[Main] Config - EMAIL: {EMAIL}")
-print(f"[Main] Config - SUBJECT_PREFIX: {SUBJECT_PREFIX}")
-print(f"[Main] Config - TRIGGER_KEYWORD: {TRIGGER_KEYWORD}")
-print(f"[Main] Config - WORKER_SCRIPT: {WORKER_SCRIPT}")
+stock_logger.debug(f"[Main] Config - EMAIL: {EMAIL}")
+stock_logger.debug(f"[Main] Config - SUBJECT_PREFIX: {SUBJECT_PREFIX}")
+stock_logger.debug(f"[Main] Config - TRIGGER_KEYWORD: {TRIGGER_KEYWORD}")
+stock_logger.debug(f"[Main] Config - WORKER_SCRIPT: {WORKER_SCRIPT}")
 
 
 SMTP_SERVER = os.getenv("SMTP_SERVER")
@@ -51,7 +53,7 @@ _processed_ids: set[bytes] = set()
 def _cleanup():
     """释放 IMAP 连接和 worker 子进程"""
     global _current_mail, _current_worker
-    print("\n[Main] Shutting down...")
+    stock_logger.debug("\n[Main] Shutting down...")
     if _current_worker and _current_worker.poll() is None:
         _current_worker.terminate()
         try:
@@ -59,11 +61,11 @@ def _cleanup():
         except subprocess.TimeoutExpired:
             _current_worker.kill()
             _current_worker.wait()
-        print("[Main] Worker process terminated")
+        stock_logger.debug("[Main] Worker process terminated")
     if _current_mail:
         try:
             _current_mail.logout()
-            print("[Main] IMAP logged out")
+            stock_logger.debug("[Main] IMAP logged out")
         except Exception:
             pass
 
@@ -83,10 +85,10 @@ def connect():
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
         mail.login(EMAIL, PASSWORD)
         mail.select("INBOX")
-        print("[Main] Connected to 163 IMAP server successfully")
+        stock_logger.debug("[Main] Connected to 163 IMAP server successfully")
         return mail
     except Exception as e:
-        print(f"[Main] Connection failed: {str(e)}")
+        stock_logger.error("[Main] Connection failed: %s", str(e))
         return None
 
 
@@ -103,7 +105,7 @@ def run_worker_process():
     启动独立子进程运行stockmail_kdj_worker，并实时监控输出与退出状态
     """
     global _current_worker
-    print("[Main] Starting new KDJ worker process...")
+    stock_logger.debug("[Main] Starting new KDJ worker process...")
 
     # 启动子进程（捕获 stdout + stderr）
     process = subprocess.Popen(
@@ -115,13 +117,13 @@ def run_worker_process():
     )
     _current_worker = process
 
-    print(f"[Main] Worker process started, PID: {process.pid}")
+    stock_logger.debug(f"[Main] Worker process started, PID: {process.pid}")
 
     # 定义线程读取输出，避免阻塞
     def read_output(pipe, prefix):
         for line in iter(pipe.readline, ''):
             if line:
-                print(f"[{prefix}] {line.strip()}")
+                stock_logger.debug(f"[{prefix}] {line.strip()}")
         pipe.close()
 
     # 启动线程读取标准输出
@@ -142,9 +144,9 @@ def run_worker_process():
 
     # 状态汇总
     if exit_code == 0:
-        print(f"[Main] Worker process (PID: {process.pid}) finished successfully")
+        stock_logger.debug(f"[Main] Worker process (PID: {process.pid}) finished successfully")
     else:
-        print(f"[Main] Worker process (PID: {process.pid}) failed with exit code: {exit_code}")
+        stock_logger.error("[Main] Worker process (PID: %d) failed with exit code: %d", process.pid, exit_code)
 
 
 def run_task():
@@ -156,7 +158,7 @@ def run_task():
 def process_new_mail(mail, mail_id):
     """处理新邮件"""
     if mail_id in _processed_ids:
-        print(f"[Main] Mail {mail_id} already processed, skip")
+        stock_logger.debug(f"[Main] Mail {mail_id} already processed, skip")
         return
     try:
         status, data = mail.fetch(mail_id, "(RFC822)")
@@ -185,27 +187,27 @@ def process_new_mail(mail, mail_id):
             except Exception:
                 pass
 
-        print(f"[Main] New email arrived: {subject}")
+        stock_logger.debug(f"[Main] New email arrived: {subject}")
 
         # 标题前缀检查 + 关键词检查
         if SUBJECT_PREFIX and not subject.startswith(SUBJECT_PREFIX):
-            print(f"[Main] Subject prefix mismatch, skip")
+            stock_logger.debug(f"[Main] Subject prefix mismatch, skip")
             return
 
         if TRIGGER_KEYWORD in subject or TRIGGER_KEYWORD in body:
-            print(f"[Main] Email body:\n{body}")
-            print("[Main] Trigger keyword detected, start task execution")
+            stock_logger.debug(f"[Main] Email body:\n{body}")
+            stock_logger.debug("[Main] Trigger keyword detected, start task execution")
             run_task()
             try:
                 mail.store(mail_id, '+FLAGS', '\\Seen')
-                print(f"[Main] Mail {mail_id} marked as read")
+                stock_logger.debug(f"[Main] Mail {mail_id} marked as read")
             except Exception as e:
-                print(f"[Main] Failed to mark mail {mail_id} as read: {e}")
+                stock_logger.error("[Main] Failed to mark mail %s as read: %s", mail_id, e)
         else:
-            print("[Main] Trigger keyword not found in email")
+            stock_logger.debug("[Main] Trigger keyword not found in email")
 
     except Exception as e:
-        print(f"[Main] Failed to process email: {str(e)}")
+        stock_logger.error("[Main] Failed to process email: %s", str(e))
 
 
 def idle_listen(mail):
@@ -217,13 +219,13 @@ def idle_listen(mail):
     try:
         mail.send(b"IDLE\r\n")
         resp = mail.readline()
-        print(f"[Main] IDLE start response: {resp.strip() if resp else 'None'}")
+        stock_logger.debug(f"[Main] IDLE start response: {resp.strip() if resp else 'None'}")
         if resp and (b"+" in resp or b"idling" in resp.lower()):
             return True
-        print(f"[Main] Unexpected IDLE response: {resp.strip() if resp else 'None'}")
+        stock_logger.debug(f"[Main] Unexpected IDLE response: {resp.strip() if resp else 'None'}")
         return False
     except Exception as e:
-        print(f"[Main] IDLE mode failed: {str(e)}")
+        stock_logger.debug(f"[Main] IDLE mode failed: {str(e)}")
         return False
 
 
@@ -232,10 +234,10 @@ def check_unread(mail):
     try:
         status, ids = mail.search(None, "UNSEEN")
         unread = ids[0].split()
-        print(f"[Main] UNSEEN search returned {len(unread)} email(s)")
+        stock_logger.debug(f"[Main] UNSEEN search returned {len(unread)} email(s)")
         return unread
     except Exception as e:
-        print(f"[Main] UNSEEN search failed: {e}")
+        stock_logger.debug(f"[Main] UNSEEN search failed: {e}")
         return []
 
 
@@ -245,21 +247,21 @@ def check_recent(mail, minutes=10):
         since_time = datetime.now().strftime("%d-%b-%Y")
         status, ids = mail.search(None, f'(SINCE "{since_time}")')
         recent = ids[0].split()
-        print(f"[Main] SINCE search ({since_time}) returned {len(recent)} email(s)")
+        stock_logger.debug(f"[Main] SINCE search ({since_time}) returned {len(recent)} email(s)")
         return recent
     except Exception as e:
-        print(f"[Main] SINCE search failed: {e}")
+        stock_logger.debug(f"[Main] SINCE search failed: {e}")
         return []
 
 
 def idle_loop():
     """主循环：持续监听邮件（修复IDLE逻辑）"""
     global _current_mail
-    print("[Main] Email monitor started (IDLE mode)")
+    stock_logger.debug("[Main] Email monitor started (IDLE mode)")
     while True:
         mail = connect()
         if not mail:
-            print("[Main] Reconnect after 60s...")
+            stock_logger.debug("[Main] Reconnect after 60s...")
             time.sleep(60)
             continue
 
@@ -270,21 +272,21 @@ def idle_loop():
                 # 第一步：检查未读邮件 + 最近邮件（防止网页版自动标为已读）
                 unread = check_unread(mail)
                 if unread:
-                    print(f"[Main] Found {len(unread)} unread emails")
+                    stock_logger.debug(f"[Main] Found {len(unread)} unread emails")
                     for mid in unread:
                         process_new_mail(mail, mid)
                 else:
                     # 未读为空时，额外检查最近10分钟的邮件
                     recent = check_recent(mail, minutes=10)
                     if recent:
-                        print(f"[Main] No unread but found {len(recent)} recent emails, checking...")
+                        stock_logger.debug(f"[Main] No unread but found {len(recent)} recent emails, checking...")
                         for mid in recent:
                             process_new_mail(mail, mid)
                     else:
-                        print("[Main] No unread or recent emails found")
+                        stock_logger.debug("[Main] No unread or recent emails found")
 
                 # 第二步：进入 IDLE 模式监听新邮件
-                print("[Main] Waiting for new emails (IDLE)...")
+                stock_logger.debug("[Main] Waiting for new emails (IDLE)...")
                 if idle_listen(mail):
                     # 持续监听 IDLE 响应，直到超时或有新邮件
                     idle_start = time.time()
@@ -297,7 +299,7 @@ def idle_loop():
                                 if resp:
                                     resp_lower = resp.lower()
                                     if b"exists" in resp_lower or b"recent" in resp_lower:
-                                        print(f"[Main] New email signal detected: {resp.strip()}")
+                                        stock_logger.debug(f"[Main] New email signal detected: {resp.strip()}")
                                         break
                         else:
                             # IDLE 超时
@@ -311,7 +313,7 @@ def idle_loop():
                             pass
                 else:
                     # IDLE 启动失败，退化为轮询模式
-                    print(f"[Main] {datetime.now().strftime('%H:%M:%S')} IDLE unavailable, fallback to polling in 30s...")
+                    stock_logger.debug(f"[Main] {datetime.now().strftime('%H:%M:%S')} IDLE unavailable, fallback to polling in 30s...")
                     time.sleep(30)
 
                 # IDLE 的原始命令会破坏 IMAP 状态，重新 select INBOX
@@ -321,13 +323,13 @@ def idle_loop():
                     pass
 
         except Exception as e:
-            print(f"[Main] Connection lost: {str(e)}")
+            stock_logger.error("[Main] Connection lost: %s", str(e))
             try:
                 mail.logout()
             except:
                 pass
             _current_mail = None
-            print("[Main] Reconnect after 30s...")
+            stock_logger.debug("[Main] Reconnect after 30s...")
             time.sleep(30)
 
 

@@ -9,6 +9,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 from scripts.database_ops.db_requestdata import get_stock_basic, get_stock_kline
+from scripts.utils import stock_logger
 
 
 def main():
@@ -16,9 +17,9 @@ def main():
     # ===================== 1. 登录 =====================
     loginStatus = bs.login()
     if loginStatus.error_code != "0":
-        print("Login failed:", loginStatus.error_msg)
+        stock_logger.error("Login failed: %s", loginStatus.error_msg)
 
-    print("login success!")
+    stock_logger.debug("login success!")
 
     code = "sz.002050"
     # code = "sz.159272"
@@ -28,23 +29,23 @@ def main():
     startDate = six_months_ago.strftime("%Y-%m-%d")
     endDate = current_date.strftime("%Y-%m-%d")
 
-    print("Start date:", startDate)
-    print("End date:", endDate)
+    stock_logger.debug("Start date: %s", startDate)
+    stock_logger.debug("End date: %s", endDate)
 
     # 获取股票中文名称（走缓存）
     basic_info = get_stock_basic(code)
     stock_name = basic_info.get("code_name", code)
-    print(f"Name corresponding to code {code}: {stock_name}")
+    stock_logger.debug("Name corresponding to code %s: %s", code, stock_name)
 
     # 获取K线数据（走缓存）
     df = get_stock_kline(code, start_date=startDate, end_date=endDate)
-    print("df.shape:", df.shape, "df.head:", df.head())
+    stock_logger.debug("df.shape: %s, df.head: %s", df.shape, df.head())
     if df.shape[0] == 0:
-        print("[error] no data get for %s !!!", code)
+        stock_logger.error("[error] no data get for %s !!!", code)
         return
 
     bs.logout()
-    print("logout success!")
+    stock_logger.debug("logout success!")
 
     # 数据类型转换
     df[["open", "high", "low", "close", "volume"]] = df[

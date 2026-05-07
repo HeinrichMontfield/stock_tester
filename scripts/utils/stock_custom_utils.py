@@ -3,6 +3,7 @@
 import baostock as bs
 import pandas as pd
 from scripts.utils.stock_common_consts import DATA_ANALYZED_FILEPATH
+from scripts.utils.stock_logger import debug, error
 import os
 
 def get_stock_basic_info(code):
@@ -21,7 +22,7 @@ def get_stock_basic_info(code):
     """
     basic_info = bs.query_stock_basic(code=code)
     if basic_info.error_code != '0':
-        print(f"Query failed! Error code: {basic_info.error_code}, Error message: {basic_info.error_msg}")
+        error("Query failed! Error code: %s, Error message: %s", basic_info.error_code, basic_info.error_msg)
         return pd.DataFrame()
     return basic_info.get_data()
 
@@ -41,7 +42,7 @@ def get_stock_code_name(basic_info_df):
         股票中文名称，获取失败返回 None
     """
     if basic_info_df is None or basic_info_df.empty:
-        print("Stock basic information is empty, cannot get name")
+        debug("Stock basic information is empty, cannot get name")
         return None
     return basic_info_df.loc[0, "code_name"]
 
@@ -62,4 +63,4 @@ def save_fig_to_data_analyzed(fig, filename, output_dir=None):
     os.makedirs(target_dir, exist_ok=True)
     filepath = os.path.join(target_dir, filename)
     fig.write_html(filepath)
-    print(f"Chart saved to {filepath}")
+    debug("Chart saved to %s", filepath)

@@ -3,6 +3,8 @@ import smtplib
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 
+from scripts.utils import stock_logger
+
 load_dotenv()
 
 SMTP_SERVER = os.getenv("SMTP_SERVER")
@@ -31,37 +33,37 @@ def send_email(subject: str, body: str, to_email: str = None) -> bool:
     msg["Subject"] = subject
 
     server = None
-    print(f"[mail_utils] Connecting to SMTP server {SMTP_SERVER}:{SMTP_PORT}...")
+    stock_logger.debug("[mail_utils] Connecting to SMTP server %s:%s...", SMTP_SERVER, SMTP_PORT)
     try:
         server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, timeout=30)
-        print("[mail_utils] SMTP SSL connection established")
+        stock_logger.debug("[mail_utils] SMTP SSL connection established")
     except Exception as e:
-        print(f"[mail_utils] Failed to connect to SMTP server: {e}")
+        stock_logger.error("[mail_utils] Failed to connect to SMTP server: %s", e)
         return False
 
     try:
         server.login(EMAIL, PASSWORD)
-        print("[mail_utils] SMTP login successful")
+        stock_logger.debug("[mail_utils] SMTP login successful")
     except smtplib.SMTPAuthenticationError as e:
-        print(f"[mail_utils] SMTP login failed: authentication error: {e}")
+        stock_logger.error("[mail_utils] SMTP login failed: authentication error: %s", e)
         return False
     except Exception as e:
-        print(f"[mail_utils] SMTP login failed: {e}")
+        stock_logger.error("[mail_utils] SMTP login failed: %s", e)
         return False
 
     try:
         msg_str = msg.as_string()
         server.sendmail(EMAIL, to_email, msg_str)
-        print(f"[mail_utils] Email sent to {to_email}")
+        stock_logger.debug("[mail_utils] Email sent to %s", to_email)
     except Exception as e:
-        print(f"[mail_utils] Failed to send email: {e}")
+        stock_logger.error("[mail_utils] Failed to send email: %s", e)
         return False
     finally:
         if server:
             try:
                 server.quit()
-                print("[mail_utils] SMTP connection closed")
+                stock_logger.debug("[mail_utils] SMTP connection closed")
             except Exception as e:
-                print(f"[mail_utils] Error closing SMTP connection: {e}")
+                stock_logger.debug("[mail_utils] Error closing SMTP connection: %s", e)
 
     return True

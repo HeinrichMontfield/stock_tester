@@ -10,6 +10,8 @@ import pandas as pd
 from pymongo import MongoClient
 from datetime import datetime
 
+from scripts.utils import stock_logger
+
 load_dotenv()
 
 client = MongoClient(os.getenv("MONGO_URI"))
@@ -27,10 +29,10 @@ def get_stock_basic(code):
     """
     basic = col_basic.find_one({"code": code}, {"_id": 0})
     if basic:
-        print(f"Read basic info of {code} from MongoDB")
+        stock_logger.debug("Read basic info of %s from MongoDB", code)
         return basic
 
-    print(f"Fetch basic info of {code} from baostock")
+    stock_logger.debug("Fetch basic info of %s from baostock", code)
     rs = bs.query_stock_basic(code=code)
     if rs.error_code != '0':
         raise RuntimeError(
@@ -46,7 +48,7 @@ def get_stock_basic(code):
     df = pd.DataFrame(data, columns=rs.fields)
     doc = df.to_dict("records")[0]
     col_basic.insert_one(doc)
-    print(f"Cached basic info of {code} to MongoDB")
+    stock_logger.debug("Cached basic info of %s to MongoDB", code)
     return doc
 
 
@@ -71,9 +73,9 @@ def get_stock_kline(code, start_date, end_date):
         effective_min = cached.get("min_verified_date", cached["min_date"])
         effective_max = cached.get("max_verified_date", cached["max_date"])
         if effective_min <= start_date and effective_max >= end_date:
-            print(
-                f"Read K-line data of {code} "
-                f"{start_date}-{end_date} from MongoDB"
+            stock_logger.debug(
+                "Read K-line data of %s %s-%s from MongoDB",
+                code, start_date, end_date,
             )
             cached_df = pd.DataFrame(cached["data"])
             mask = (
@@ -82,15 +84,14 @@ def get_stock_kline(code, start_date, end_date):
             )
             return cached_df[mask].reset_index(drop=True)
         else:
-            print(
-                f"Cache date range {cached['min_date']}~{cached['max_date']} "
-                f"insufficient for {start_date}~{end_date}, "
-                f"re-fetching from baostock"
+            stock_logger.debug(
+                "Cache date range %s~%s insufficient for %s~%s, re-fetching from baostock",
+                cached["min_date"], cached["max_date"], start_date, end_date,
             )
 
-    print(
-        f"Fetch K-line data of {code} "
-        f"{start_date}-{end_date} from baostock"
+    stock_logger.debug(
+        "Fetch K-line data of %s %s-%s from baostock",
+        code, start_date, end_date,
     )
     rs = bs.query_history_k_data_plus(
         code=code,
@@ -124,6 +125,6 @@ def get_stock_kline(code, start_date, end_date):
             {"$set": update},
             upsert=True,
         )
-        print(f"Cached K-line data of {code} to MongoDB")
+        stock_logger.debug("Cached K-line data of %s to MongoDB", code)
 
     return df

@@ -3,6 +3,8 @@ import os
 from dotenv import load_dotenv
 from pymongo import MongoClient, errors
 
+from scripts.utils import stock_logger
+
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
@@ -22,7 +24,7 @@ def _close(client: MongoClient):
     try:
         client.close()
     except Exception as e:
-        print(f"[news_store] Error closing MongoDB connection: {e}")
+        stock_logger.debug("[news_store] Error closing MongoDB connection: %s", e)
 
 
 def init_db() -> None:
@@ -32,9 +34,9 @@ def init_db() -> None:
         col.create_index("email_sent")
         col.create_index("time")
         col.create_index("matched_keywords")
-        print("[news_store] MongoDB indexes initialized")
+        stock_logger.debug("[news_store] MongoDB indexes initialized")
     except errors.PyMongoError as e:
-        print(f"[news_store] Failed to create indexes: {e}")
+        stock_logger.debug("[news_store] Failed to create indexes: %s", e)
     finally:
         _close(client)
 
@@ -46,7 +48,7 @@ def news_exists(news_id: str) -> bool:
         count = col.count_documents({"_id": news_id}, limit=1)
         return count > 0
     except errors.PyMongoError as e:
-        print(f"[news_store] Error checking existence of {news_id}: {e}")
+        stock_logger.debug("[news_store] Error checking existence of %s: %s", news_id, e)
         return False
     finally:
         _close(client)
@@ -60,7 +62,7 @@ def save_news(news_item: dict, keywords: list[str]) -> bool:
     """
     content = news_item.get("content", "")
     if not content or not content.strip():
-        print(f"[news_store] Skipping empty content for {news_item.get('id')}")
+        stock_logger.debug("[news_store] Skipping empty content for %s", news_item.get('id'))
         return False
 
     matched = [kw for kw in keywords if kw in content]
@@ -75,13 +77,13 @@ def save_news(news_item: dict, keywords: list[str]) -> bool:
     client, col = _get_collection()
     try:
         col.insert_one(doc)
-        print(f"[news_store] Saved news {doc['_id']} with keywords: {matched}")
+        stock_logger.debug("[news_store] Saved news %s with keywords: %s", doc['_id'], matched)
         return True
     except errors.DuplicateKeyError:
-        print(f"[news_store] News {doc['_id']} already exists, skipped")
+        stock_logger.debug("[news_store] News %s already exists, skipped", doc['_id'])
         return False
     except errors.PyMongoError as e:
-        print(f"[news_store] Failed to save news {doc['_id']}: {e}")
+        stock_logger.error("[news_store] Failed to save news %s: %s", doc['_id'], e)
         return False
     finally:
         _close(client)
@@ -101,7 +103,7 @@ def get_news_basic(news_id: str) -> dict | None:
             del doc["content"]
         return doc
     except errors.PyMongoError as e:
-        print(f"[news_store] Error querying {news_id}: {e}")
+        stock_logger.debug("[news_store] Error querying %s: %s", news_id, e)
         return None
     finally:
         _close(client)
@@ -114,7 +116,7 @@ def get_news_content(news_id: str) -> str | None:
         doc = col.find_one({"_id": news_id}, {"_id": 0, "content": 1})
         return doc.get("content") if doc else None
     except errors.PyMongoError as e:
-        print(f"[news_store] Error getting content for {news_id}: {e}")
+        stock_logger.debug("[news_store] Error getting content for %s: %s", news_id, e)
         return None
     finally:
         _close(client)
@@ -127,7 +129,7 @@ def search_by_content(keyword: str) -> list[dict]:
         cursor = col.find({"matched_keywords": keyword}, {"_id": 0})
         return list(cursor)
     except errors.PyMongoError as e:
-        print(f"[news_store] Error searching by keyword '{keyword}': {e}")
+        stock_logger.debug("[news_store] Error searching by keyword '%s': %s", keyword, e)
         return []
     finally:
         _close(client)
@@ -141,12 +143,12 @@ def get_unsent_news() -> list[dict]:
         with_false = col.count_documents({"email_sent": False})
         with_nonempty = col.count_documents({"matched_keywords": {"$ne": []}})
         both = col.count_documents({"email_sent": False, "matched_keywords": {"$ne": []}})
-        print(f"[news_store] get_unsent_news debug: total={total}, email_sent=False={with_false}, "
-              f"matched_nonempty={with_nonempty}, both={both}")
+        stock_logger.debug("[news_store] get_unsent_news debug: total=%d, email_sent=False=%d, "
+              "matched_nonempty=%d, both=%d", total, with_false, with_nonempty, both)
         cursor = col.find({"email_sent": False, "matched_keywords": {"$ne": []}})
         return list(cursor)
     except errors.PyMongoError as e:
-        print(f"[news_store] Error getting unsent news: {e}")
+        stock_logger.debug("[news_store] Error getting unsent news: %s", e)
         return []
     finally:
         _close(client)
@@ -163,7 +165,7 @@ def get_unsent_news_since(cutoff_time) -> list[dict]:
         })
         return list(cursor)
     except errors.PyMongoError as e:
-        print(f"[news_store] Error getting unsent news since {cutoff_time}: {e}")
+        stock_logger.debug("[news_store] Error getting unsent news since %s: %s", cutoff_time, e)
         return []
     finally:
         _close(client)
@@ -179,9 +181,9 @@ def mark_email_sent(news_ids: list[str]) -> None:
             {"_id": {"$in": news_ids}},
             {"$set": {"email_sent": True}},
         )
-        print(f"[news_store] Marked {result.modified_count} news as email_sent")
+        stock_logger.debug("[news_store] Marked %d news as email_sent", result.modified_count)
     except errors.PyMongoError as e:
-        print(f"[news_store] Error marking email_sent: {e}")
+        stock_logger.debug("[news_store] Error marking email_sent: %s", e)
     finally:
         _close(client)
 
@@ -196,8 +198,8 @@ def reindex_all_keywords(keywords: list[str]) -> None:
             matched = [kw for kw in keywords if kw in doc.get("content", "")]
             col.update_one({"_id": doc["_id"]}, {"$set": {"matched_keywords": matched}})
             updated += 1
-        print(f"[news_store] Reindexed matched_keywords for {updated} documents")
+        stock_logger.debug("[news_store] Reindexed matched_keywords for %d documents", updated)
     except errors.PyMongoError as e:
-        print(f"[news_store] Error during reindex: {e}")
+        stock_logger.debug("[news_store] Error during reindex: %s", e)
     finally:
         _close(client)

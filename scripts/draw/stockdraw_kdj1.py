@@ -12,6 +12,7 @@ from plotly.subplots import make_subplots
 from dotenv import load_dotenv
 
 from scripts.database_ops.db_requestdata import get_stock_basic, get_stock_kline
+from scripts.utils import stock_logger
 
 
 def get_stock_data(code, lookback_months=6):
@@ -20,7 +21,7 @@ def get_stock_data(code, lookback_months=6):
     Returns (DataFrame, stock_name).
     """
     lg = bs.login()
-    print("Login response:", lg.error_msg)
+    stock_logger.debug("Login response: %s", lg.error_msg)
 
     end_date = datetime.now().strftime("%Y-%m-%d")
     start_date = (datetime.now() - timedelta(days=lookback_months * 30)).strftime(
@@ -30,13 +31,13 @@ def get_stock_data(code, lookback_months=6):
     # Stock name from cached basic info
     basic_info = get_stock_basic(code)
     stock_name = basic_info.get("code_name", code)
-    print(f"Stock name: {stock_name}")
+    stock_logger.debug("Stock name: %s", stock_name)
 
     # K-line data from cached layer
     df = get_stock_kline(code, start_date=start_date, end_date=end_date)
 
     if df.empty:
-        print(f"No data obtained for {code}")
+        stock_logger.debug("No data obtained for %s", code)
         bs.logout()
         return None, None
 
@@ -192,7 +193,7 @@ def plot_stock_with_kdj(df, stock_name="sz.002050"):
 
 def main():
     if len(sys.argv) < 2:
-        print("Error: output_folder argument is required", file=sys.stderr)
+        stock_logger.error("Error: output_folder argument is required")
         sys.exit(1)
 
     output_folder = sys.argv[1]
@@ -200,7 +201,7 @@ def main():
     load_dotenv()
     html_output_folder = os.getenv("HTML_OUTPUT_FOLDER")
     if not html_output_folder:
-        print("Error: HTML_OUTPUT_FOLDER not set in .env", file=sys.stderr)
+        stock_logger.error("Error: HTML_OUTPUT_FOLDER not set in .env")
         sys.exit(1)
 
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -211,26 +212,26 @@ def main():
 
     stock_code = "sz.002050"
 
-    print(f"Fetching data for {stock_code}...")
+    stock_logger.debug("Fetching data for %s...", stock_code)
 
     df, stock_name = get_stock_data(stock_code, lookback_months=6)
 
     if df is None or df.empty:
-        print("Data fetch failed")
+        stock_logger.error("Data fetch failed")
         sys.exit(1)
 
-    print(f"Successfully obtained {len(df)} records")
-    print(f"Data date range: {df['date'].min()} to {df['date'].max()}")
-    print("\nFirst 5 rows of data:")
-    print(df.head())
+    stock_logger.debug("Successfully obtained %d records", len(df))
+    stock_logger.debug("Data date range: %s to %s", df['date'].min(), df['date'].max())
+    stock_logger.debug("\nFirst 5 rows of data:")
+    stock_logger.debug("%s", df.head())
 
-    print("\nCalculating KDJ indicator...")
+    stock_logger.debug("\nCalculating KDJ indicator...")
     df = calculate_kdj(df, n=9, m1=3, m2=3)
 
-    print("\nKDJ calculation results (last 5 rows):")
-    print(df[["date", "close", "K", "D", "J"]].tail())
+    stock_logger.debug("\nKDJ calculation results (last 5 rows):")
+    stock_logger.debug("%s", df[["date", "close", "K", "D", "J"]].tail())
 
-    print("\nGenerating chart...")
+    stock_logger.debug("\nGenerating chart...")
     fig = plot_stock_with_kdj(df, stock_name)
 
     from scripts.utils.stock_custom_utils import save_fig_to_data_analyzed

@@ -4,6 +4,8 @@ import datetime
 from dotenv import load_dotenv
 from pymongo import MongoClient, errors
 
+from scripts.utils import stock_logger
+
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
@@ -26,10 +28,10 @@ def search_stock_news(keyword: str, start_time: str, end_time: str) -> list[str]
         start_dt = datetime.datetime.strptime(start_time, "%Y-%m-%d-%H-%M-%S")
         end_dt = datetime.datetime.strptime(end_time, "%Y-%m-%d-%H-%M-%S")
     except ValueError as e:
-        print(f"[news_query] Invalid time format: {e}")
+        stock_logger.debug("[news_query] Invalid time format: %s", e)
         return []
 
-    print(f"[news_query] Searching news: keyword='{keyword}', from={start_time}, to={end_time}")
+    stock_logger.debug("[news_query] Searching news: keyword='%s', from=%s, to=%s", keyword, start_time, end_time)
 
     client = MongoClient(MONGO_URI)
     col = client[DB_NAME][COLLECTION_NAME]
@@ -39,10 +41,10 @@ def search_stock_news(keyword: str, start_time: str, end_time: str) -> list[str]
             {"_id": 1},
         )
         result = [doc["_id"] for doc in cursor]
-        print(f"[news_query] Found {len(result)} matching news")
+        stock_logger.debug("[news_query] Found %d matching news", len(result))
         return result
     except errors.PyMongoError as e:
-        print(f"[news_query] Query error: {e}")
+        stock_logger.error("[news_query] Query error: %s", e)
         return []
     finally:
         client.close()

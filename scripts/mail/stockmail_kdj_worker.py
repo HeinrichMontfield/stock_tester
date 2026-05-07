@@ -9,18 +9,20 @@ from email import encoders
 from datetime import datetime
 from dotenv import load_dotenv
 
+from scripts.utils import stock_logger
+
 load_dotenv()
 
 
 def _log(msg):
-    """Print message to stdout and flush immediately to ensure correct log ordering."""
-    print(msg)
+    """Log message to debug log and flush immediately to ensure correct log ordering."""
+    stock_logger.debug("%s", msg)
     sys.stdout.flush()
 
 
 def _log_err(msg):
-    """Print error message to stderr and flush immediately."""
-    print(msg, file=sys.stderr)
+    """Log error to error log and flush immediately to ensure correct log ordering."""
+    stock_logger.error("%s", msg)
     sys.stderr.flush()
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -10,13 +10,14 @@ from dotenv import load_dotenv
 import news_fetcher
 import news_store
 from news_mail import send_news_email
+from scripts.utils import stock_logger
 
 KEYWORDS_STATE_FILE = os.path.join(os.path.dirname(__file__), "_keywords_state.json")
 
 SECONDS_PER_MINUTE = 60
 INTERVAL_MARKET = 10 * SECONDS_PER_MINUTE
-INTERVAL_OFF_HOURS = 120 * SECONDS_PER_MINUTE
-INTERVAL_FETCH = 10 * SECONDS_PER_MINUTE
+INTERVAL_OFF_HOURS = 1 * SECONDS_PER_MINUTE
+INTERVAL_FETCH = 0.5 * SECONDS_PER_MINUTE
 TZ_UTC8 = timezone(timedelta(hours=8))
 
 running = True
@@ -24,7 +25,7 @@ running = True
 
 def _signal_handler(signum, frame):
     global running
-    print(f"\n[news_monitor] Received signal {signum}, shutting down...")
+    stock_logger.debug("\n[news_monitor] Received signal %s, shutting down...", signum)
     running = False
 
 
@@ -43,7 +44,7 @@ def _save_keywords_state(keywords: list[str]):
         with open(KEYWORDS_STATE_FILE, "w") as f:
             json.dump(keywords, f)
     except Exception as e:
-        print(f"[news_monitor] Failed to save keywords state: {e}")
+        stock_logger.error("[news_monitor] Failed to save keywords state: %s", e)
 
 
 def _is_market_hours(market_start: str, market_end: str) -> bool:
@@ -77,7 +78,7 @@ def _handle_keyword_change(keywords: list[str]):
     """
     all_unsent = news_store.get_unsent_news()
     if not all_unsent:
-        print("[news_monitor] Keyword change: no unsent news to process")
+        stock_logger.debug("[news_monitor] Keyword change: no unsent news to process")
         return
 
     cutoff = datetime.now() - timedelta(hours=12)
@@ -87,17 +88,17 @@ def _handle_keyword_change(keywords: list[str]):
 
     if old_ids:
         news_store.mark_email_sent(old_ids)
-        print(f"[news_monitor] Keyword change: silenced {len(old_ids)} older (>12h) news, "
-              f"leaving {recent_count} recent news for normal cycle")
+        stock_logger.debug("[news_monitor] Keyword change: silenced %d older (>12h) news, "
+              "leaving %d recent news for normal cycle", len(old_ids), recent_count)
     else:
-        print(f"[news_monitor] Keyword change: all {recent_count} unsent news within 12h, "
-              f"left for normal cycle")
+        stock_logger.debug("[news_monitor] Keyword change: all %d unsent news within 12h, "
+              "left for normal cycle", recent_count)
 
 
 def main():
     global running
 
-    print("[news_monitor] Starting news monitor...")
+    stock_logger.debug("[news_monitor] Starting news monitor...")
 
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
@@ -105,22 +106,22 @@ def main():
     load_dotenv()
     keywords_raw = os.getenv("MONITOR_KEYWORDS", "")
     keywords = [kw.strip() for kw in keywords_raw.split(",") if kw.strip()]
-    print(f"[news_monitor] Monitor keywords: {keywords}")
+    stock_logger.debug("[news_monitor] Monitor keywords: %s", keywords)
 
     market_start = os.getenv("MARKET_HOURS_START", "09:00")
     market_end = os.getenv("MARKET_HOURS_END", "15:00")
-    print(f"[news_monitor] Market hours: {market_start} - {market_end} (UTC+8)")
+    stock_logger.debug("[news_monitor] Market hours: %s - %s (UTC+8)", market_start, market_end)
 
     news_store.init_db()
 
     prev_keywords = _load_keywords_state()
     if prev_keywords is not None and prev_keywords != keywords:
-        print(f"[news_monitor] Keywords changed: {prev_keywords} -> {keywords}")
+        stock_logger.debug("[news_monitor] Keywords changed: %s -> %s", prev_keywords, keywords)
         news_store.reindex_all_keywords(keywords)
         _handle_keyword_change(keywords)
     _save_keywords_state(keywords)
 
-    print(f"[news_monitor] Configuration loaded. {len(keywords)} keywords")
+    stock_logger.debug("[news_monitor] Configuration loaded. %d keywords", len(keywords))
 
     last_email_time = None
 
@@ -144,37 +145,39 @@ def main():
             send_count = 0
             if should_send:
                 is_first_run = last_email_time is None
-                print(f"[news_monitor] should_send=True, is_first_run={is_first_run}, in_market={in_market}")
-                if in_market or is_first_run:
-                    unsent_news = news_store.get_unsent_news()
-                else:
-                    cutoff = now - timedelta(seconds=INTERVAL_OFF_HOURS)
-                    unsent_news = news_store.get_unsent_news_since(cutoff)
+                stock_logger.debug("[news_monitor] should_send=True, is_first_run=%s, in_market=%s", is_first_run, in_market)
+                # 始终取全部未发送新闻，不做 time 过滤。
+                # 新闻 time 字段是新浪发布时间，不是抓取时间，按 time 过滤会漏掉
+                # 休市后抓到的下午旧闻（发布时间早于 last_email_time）。
+                unsent_news = news_store.get_unsent_news()
 
                 send_count = len(unsent_news)
-                print(f"[news_monitor] unsent_news count: {send_count}")
+                stock_logger.debug("[news_monitor] unsent_news count: %d", send_count)
                 if unsent_news:
                     send_news_email(keywords, unsent_news)
-                last_email_time = now
+                    # 仅在真正发送邮件后才更新 last_email_time，避免空轮询导致
+                    # 下次需再等满 INTERVAL_OFF_HOURS 才能发送
+                    last_email_time = now
 
             phase = "market" if in_market else "off-hours"
-            print(
-                f"[news_monitor] Cycle complete [{phase}]: fetched={len(news_items)}, "
-                f"new={new_count}, sent={send_count}, "
-                f"next_fetch={INTERVAL_FETCH}s"
+            stock_logger.debug(
+                "[news_monitor] Cycle complete [%s]: fetched=%d, "
+                "new=%d, sent=%d, "
+                "next_fetch=%ds",
+                phase, len(news_items), new_count, send_count, INTERVAL_FETCH,
             )
         except Exception as e:
-            print(f"[news_monitor] Cycle error: {e}")
+            stock_logger.error("[news_monitor] Cycle error: %s", e)
 
         if not running:
             break
 
-        for _ in range(INTERVAL_FETCH):
+        for _ in range(int(INTERVAL_FETCH)):
             if not running:
                 break
             time.sleep(1)
 
-    print("[news_monitor] News monitor stopped")
+    stock_logger.debug("[news_monitor] News monitor stopped")
 
 
 if __name__ == "__main__":

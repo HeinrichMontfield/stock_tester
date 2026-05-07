@@ -17,6 +17,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 from scripts.database_ops.db_requestdata import get_stock_basic, get_stock_kline
+from scripts.utils import stock_logger
 
 # ======================
 # 1. 登录 Baostock
@@ -31,8 +32,8 @@ if __name__ == "__main__":
 
     # 1. 获取基本信息
     basic_info = get_stock_basic(code)
-    print("Basic Info:")
-    print(basic_info)
+    stock_logger.debug("Basic Info:")
+    stock_logger.debug("%s", basic_info)
 
     # 获取当前系统日期
     current_date = datetime.now()
@@ -45,8 +46,8 @@ if __name__ == "__main__":
 
     # 2. 获取日期范围K线
     df = get_stock_kline(code, start_date=startDate, end_date=endDate)
-    print("\nK-line Data:")
-    print(df.head())
+    stock_logger.debug("\nK-line Data:")
+    stock_logger.debug("%s", df.head())
 
 # 退出baostock
 bs.logout()
