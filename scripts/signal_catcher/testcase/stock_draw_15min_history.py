@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 # 使用 plotly 绘制15分钟k线图，保存为 html 文件
 
+import json
 import os
+
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -35,6 +37,17 @@ def draw_stock_15min_history(stock_code, start_time=None, end_time=None):
         stock_logger.error("Stock %s: csv file not found at %s", stock_code, csv_file)
         return None
 
+    # 从 info.json 中获取股票简称
+    info_file = os.path.join(project_root, "data", "signal_catcher", f"{stock_code}_info.json")
+    stock_name = ""
+    if os.path.exists(info_file):
+        try:
+            with open(info_file, "r", encoding="utf-8") as f:
+                info = json.load(f)
+            stock_name = info.get("individual_info", {}).get("股票简称", "")
+        except (json.JSONDecodeError, KeyError) as e:
+            stock_logger.debug("Stock %s: failed to read stock name from info: %s", stock_code, str(e))
+
     try:
         df = pd.read_csv(csv_file)
         df["datetime"] = pd.to_datetime(df["datetime"])
@@ -51,24 +64,50 @@ def draw_stock_15min_history(stock_code, start_time=None, end_time=None):
         stock_logger.debug("Stock %s: no data in range [%s, %s]", stock_code, start_time or "all", end_time or "all")
         return None
 
+    # 按时间排序，用连续整数索引作为 x 轴，避免 plotly datetime 轴 + rangebreaks 的空白 bug
+    df = df.sort_values("datetime").reset_index(drop=True)
+    x_indices = list(range(len(df)))
+
     stock_logger.debug("Stock %s: drawing chart with %d records", stock_code, len(df))
 
     fig = go.Figure(
         data=[
             go.Candlestick(
-                x=df["datetime"],
+                x=x_indices,
                 open=df["open"],
                 high=df["high"],
                 low=df["low"],
                 close=df["close"],
                 name=stock_code,
+                text=df["datetime"].dt.strftime("%Y-%m-%d %H:%M"),
+                hoverinfo="text",
             )
         ]
     )
 
+    # 每月 1/10/20/30 日在 x 轴做标记（取当日第一条数据的位置）
+    tick_indices = []
+    tick_texts = []
+    target_days = {1, 10, 20, 30}
+    for idx, row in df.iterrows():
+        if row["datetime"].day in target_days:
+            tick_date = row["datetime"].strftime("%m-%d")
+            # 每个日期只取第一个位置
+            if not tick_texts or tick_texts[-1] != tick_date:
+                tick_indices.append(idx)
+                tick_texts.append(tick_date)
+
+    title_text = f"{stock_code}_{stock_name} 15min K-line" if stock_name else f"{stock_code} 15min K-line"
+
     fig.update_layout(
-        title=f"{stock_code} 15min K-line",
-        xaxis_title="Time",
+        title=title_text,
+        xaxis=dict(
+            title="Time",
+            tickmode="array",
+            tickvals=tick_indices,
+            ticktext=tick_texts,
+            tickangle=45,
+        ),
         yaxis_title="Price",
         xaxis_rangeslider_visible=False,
     )
@@ -79,7 +118,12 @@ def draw_stock_15min_history(stock_code, start_time=None, end_time=None):
     html_path = os.path.join(temp_dir, html_filename)
 
     try:
-        fig.write_html(html_path)
+        fig.write_html(
+            html_path,
+            include_plotlyjs=True,
+            default_height="100vh",
+            default_width="100%",
+        )
     except Exception as e:
         stock_logger.error("Stock %s: failed to save html: %s", stock_code, str(e))
         return None
