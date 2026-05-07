@@ -3,13 +3,11 @@
 
 import json
 import os
-from datetime import datetime, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
 
 from scripts.utils import stock_logger
-from scripts.utils.stock_common_consts import A_STOCK_HOLIDAYS
 
 
 def _get_project_root():
@@ -66,48 +64,52 @@ def draw_stock_15min_history(stock_code, start_time=None, end_time=None):
         stock_logger.debug("Stock %s: no data in range [%s, %s]", stock_code, start_time or "all", end_time or "all")
         return None
 
+    # 按时间排序，用连续整数索引作为 x 轴，避免 plotly datetime 轴 + rangebreaks 的空白 bug
+    df = df.sort_values("datetime").reset_index(drop=True)
+    x_indices = list(range(len(df)))
+
     stock_logger.debug("Stock %s: drawing chart with %d records", stock_code, len(df))
 
     fig = go.Figure(
         data=[
             go.Candlestick(
-                x=df["datetime"],
+                x=x_indices,
                 open=df["open"],
                 high=df["high"],
                 low=df["low"],
                 close=df["close"],
                 name=stock_code,
+                text=df["datetime"].dt.strftime("%Y-%m-%d %H:%M"),
+                hoverinfo="text",
             )
         ]
     )
 
+    # 每月 1/10/20/30 日在 x 轴做标记（取当日第一条数据的位置）
+    tick_indices = []
+    tick_texts = []
+    target_days = {1, 10, 20, 30}
+    for idx, row in df.iterrows():
+        if row["datetime"].day in target_days:
+            tick_date = row["datetime"].strftime("%m-%d")
+            # 每个日期只取第一个位置
+            if not tick_texts or tick_texts[-1] != tick_date:
+                tick_indices.append(idx)
+                tick_texts.append(tick_date)
+
     title_text = f"{stock_code}_{stock_name} 15min K-line" if stock_name else f"{stock_code} 15min K-line"
-
-    # 构建 rangebreaks: 周末 + 非交易时段 + A股节假日
-    rangebreaks = [
-        dict(bounds=["sat", "mon"]),  # remove weekend gaps
-        # 跨午夜的间断拆成两段：当日收盘→24点、0点→次日开市
-        dict(bounds=[15, 24], pattern="hour"),  # remove overnight: 15:00 to midnight
-        dict(bounds=[0, 9.5], pattern="hour"),  # remove overnight: midnight to 9:30
-        dict(bounds=[11.5, 13], pattern="hour"),  # remove lunch break gaps (11:30 to 13:00)
-    ]
-
-    # 有问题，会导致 html 空白
-    # 节假日：使用 values + dvalue 替代 bounds + pattern=""，
-    # 避免 plotly 对日期字符串 pattern 推断失败导致 html 空白。
-    # dvalue 单位毫秒，86400000 = 1 天，天数 = (结束-开始).days + 1（含首尾）
-    # for holiday_start, holiday_end in A_STOCK_HOLIDAYS:
-    #     start_dt = datetime.strptime(holiday_start, "%Y-%m-%d")
-    #     end_dt = datetime.strptime(holiday_end, "%Y-%m-%d")
-    #     holiday_days = (end_dt - start_dt).days + 1
-    #     rangebreaks.append(dict(values=[holiday_start], dvalue=holiday_days * 86400000))
 
     fig.update_layout(
         title=title_text,
-        xaxis_title="Time",
+        xaxis=dict(
+            title="Time",
+            tickmode="array",
+            tickvals=tick_indices,
+            ticktext=tick_texts,
+            tickangle=45,
+        ),
         yaxis_title="Price",
         xaxis_rangeslider_visible=False,
-        xaxis_rangebreaks=rangebreaks,
     )
 
     range_start = start_time or df["datetime"].iloc[0].strftime("%Y-%m-%d")
