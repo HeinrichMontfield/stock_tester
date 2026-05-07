@@ -79,8 +79,14 @@ def draw_stock_15min_history(stock_code, start_time=None, end_time=None):
                 low=df["low"],
                 close=df["close"],
                 name=stock_code,
-                text=df["datetime"].dt.strftime("%Y-%m-%d %H:%M"),
-                hoverinfo="text",
+                customdata=df["datetime"].dt.strftime("%Y-%m-%d %H:%M"),
+                hovertemplate=(
+                    "Date: %{customdata}<br>"
+                    "Open: %{open}<br>"
+                    "High: %{high}<br>"
+                    "Low: %{low}<br>"
+                    "Close: %{close}<extra></extra>"
+                ),
             )
         ]
     )
