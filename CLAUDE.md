@@ -17,7 +17,8 @@
 见 @requirements.txt。
 
 # 项目结构
-本项目为纯python，位于 /Users/mac/virtualenvs/venv_baostock/ 中。
+本项目有两个 worktree，如果你的运行目录在 venv_baostock-wt2 那么是处于 worktree 二号分支中。
+本项目为纯python，主 worktree 位于 /Users/mac/virtualenvs/venv_baostock/ 中。
 venv_baostock 是一个 python 虚拟环境文件夹。
 非第三方package的，自己编写的脚本文件都放在 ./scripts。
 scripts/database_ops：数据库访问操作。
@@ -29,4 +30,20 @@ scripts/akshare: submodule，从 git fork 的 akshare 股票功能库。
 scripts/data_analyzed：存放临时分析的数据结果，中间结果等。
 scripts/sginal_catcher: 股票实时指标监控
 
+# worktree 结构
+主worktree：/Users/mac/virtualenvs/venv_baostock/ 
+二号worktree: /Users/mac/virtualenvs/venv_baostock-wt2/
+两个 worktree 通过 symlink 共享不被 git 管理的文件夹和文件
+共享的不被 git 管理的内容：
+    "bin"
+    "include"
+    "lib"
+    "share"
+    "data"
+    "worktree_share"
+    "pyvenv.cfg"
+    ".env"
+    "log"
+    "scripts/data_analyzed"
+你应当尽量避免修改这些共享的不被 git 管理的内容。
 

@@ -85,12 +85,28 @@ def _merge_and_save_csv(csv_file, df_new):
     return df_new
 
 
-def _save_info_json(info_file, stock_code, start_time, end_time):
+def _fetch_individual_info(stock_code):
+    """Fetch stock individual info via stock_individual_info_em, return dict keyed by item name."""
+    try:
+        df = ak.stock_individual_info_em(symbol=stock_code)
+    except Exception as e:
+        stock_logger.error(
+            "Stock %s: fetch individual info failed: %s", stock_code, str(e)
+        )
+        return {}
+    if df is None or df.empty:
+        return {}
+    return dict(zip(df["item"], df["value"]))
+
+
+def _save_info_json(info_file, stock_code, start_time, end_time, individual_info):
     info = {
         "stock_code": stock_code,
         "start_time": start_time,
         "end_time": end_time,
     }
+    if individual_info:
+        info["individual_info"] = individual_info
     with open(info_file, "w", encoding="utf-8") as f:
         json.dump(info, f, indent=2, ensure_ascii=False)
 
@@ -165,10 +181,12 @@ def request_stock_15min_history(stock_code, start_time, end_time):
         stock_code, len(df_final), csv_file,
     )
 
-    _save_info_json(info_file, stock_code, overall_start, overall_end)
+    individual_info = _fetch_individual_info(stock_code)
+
+    _save_info_json(info_file, stock_code, overall_start, overall_end, individual_info)
     stock_logger.debug(
-        "Stock %s: updated info range to [%s, %s]",
-        stock_code, overall_start, overall_end,
+        "Stock %s: updated info range to [%s, %s], individual_info keys=%d",
+        stock_code, overall_start, overall_end, len(individual_info),
     )
 
     return csv_file
