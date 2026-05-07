@@ -1,98 +1,33 @@
-(venv_baostock) mac@macdeMac-mini scripts %>sh ./news_monitor/start_news_monitor.sh                                            [0]
-[start_news_monitor.sh] Starting news_monitor...
-[news_monitor] Starting news monitor...
-[news_monitor] Monitor keywords: ['伊朗', '中东', '原油', '黄金', '特朗普', '科创', '化工', '炼化', 'PTA', '聚酯', '恒力石化', '拓维信息', '稀土', '有色', '午评', '板块', '三花智控', '中国卫星', '西部材料', '利通电子', '中际旭创', '恒生科技', '科指', '沪指', '盘中']
-[news_monitor] Market hours: 09:00 - 15:00 (UTC+8)
-[news_store] Failed to create indexes: The field 'unique' is not valid for an _id index specification. Specification: { unique: true, name: "_id_1", key: { _id: 1 }, v: 2 }, full error: {'ok': 0.0, 'errmsg': 'The field \'unique\' is not valid for an _id index specification. Specification: { unique: true, name: "_id_1", key: { _id: 1 }, v: 2 }', 'code': 197, 'codeName': 'InvalidIndexSpecificationOption'}
-[news_monitor] Keywords changed: ['伊朗', '中东', '原油', '黄金', '特朗普', '科创', '化工', '炼化', 'PTA', '聚酯', '恒力石化', '拓维信息', '稀土', '有色', '导弹', '空袭', '机器人', '算力', '存储'] -> ['伊朗', '中东', '原油', '黄金', '特朗普', '科创', '化工', '炼化', 'PTA', '聚酯', '恒力石化', '拓维信息', '稀土', '有色', '午评', '板块', '三花智控', '中国卫星', '西部材料', '利通电子', '中际旭创', '恒生科技', '科指', '沪指', '盘中']
-[news_store] Reindexed matched_keywords for 678 documents
-[news_monitor] Keyword change: sending 24 recent news, skipping 1 older (>12h) news
-[mail_utils] Connecting to SMTP server smtp.qq.com:465...
-[mail_utils] SMTP SSL connection established
-[mail_utils] SMTP login successful
-[mail_utils] Email sent to 1638933536@qq.com
-[mail_utils] SMTP connection closed
-[news_store] Marked 25 news as email_sent
-[news_monitor] Keyword change: marked 25 news as sent
-[news_monitor] Configuration loaded. 25 keywords
-[news_fetcher] Fetching news from sina finance...
-[news_fetcher] Fetched 20 news items
-[news_store] Saved news sina_2026-05-06-20-24-48 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-24-42 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-24-38 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-24-34 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-24-26 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-23-35 with keywords: ['特朗普']
-[news_store] Saved news sina_2026-05-06-20-23-19 with keywords: ['原油', '盘中']
-[news_store] Saved news sina_2026-05-06-20-23-08 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-22-38 with keywords: ['伊朗']
-[news_store] Saved news sina_2026-05-06-20-22-31 with keywords: ['特朗普']
-[news_store] Saved news sina_2026-05-06-20-22-07 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-22-02 with keywords: ['伊朗']
-[news_store] Saved news sina_2026-05-06-20-21-51 with keywords: ['伊朗']
-[news_store] Saved news sina_2026-05-06-20-21-34 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-21-17 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-21-09 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-20-11 with keywords: ['特朗普']
-[news_store] Saved news sina_2026-05-06-20-19-58 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-19-49 with keywords: []
-[news_store] Saved news sina_2026-05-06-20-19-47 with keywords: ['伊朗']
-[news_query] Searching news: keyword='伊朗', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 38 matching news
-[news_query] Searching news: keyword='中东', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 14 matching news
-[news_query] Searching news: keyword='原油', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 12 matching news
-[news_query] Searching news: keyword='黄金', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 13 matching news
-[news_query] Searching news: keyword='特朗普', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 26 matching news
-[news_query] Searching news: keyword='科创', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 11 matching news
-[news_query] Searching news: keyword='化工', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 5 matching news
-[news_query] Searching news: keyword='炼化', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 0 matching news
-[news_query] Searching news: keyword='PTA', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 0 matching news
-[news_query] Searching news: keyword='聚酯', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 0 matching news
-[news_query] Searching news: keyword='恒力石化', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 0 matching news
-[news_query] Searching news: keyword='拓维信息', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 0 matching news
-[news_query] Searching news: keyword='稀土', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 1 matching news
-[news_query] Searching news: keyword='有色', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 1 matching news
-[news_query] Searching news: keyword='午评', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 2 matching news
-[news_query] Searching news: keyword='板块', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 17 matching news
-[news_query] Searching news: keyword='三花智控', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 0 matching news
-[news_query] Searching news: keyword='中国卫星', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 0 matching news
-[news_query] Searching news: keyword='西部材料', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 1 matching news
-[news_query] Searching news: keyword='利通电子', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 2 matching news
-[news_query] Searching news: keyword='中际旭创', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 2 matching news
-[news_query] Searching news: keyword='恒生科技', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 4 matching news
-[news_query] Searching news: keyword='科指', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 1 matching news
-[news_query] Searching news: keyword='沪指', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 1 matching news
-[news_query] Searching news: keyword='盘中', from=2026-05-06-00-00-00, to=2026-05-06-20-25-14
-[news_query] Found 13 matching news
-[news_mail] Sending email with 8 news items
-[mail_utils] Connecting to SMTP server smtp.qq.com:465...
-[mail_utils] SMTP SSL connection established
-[mail_utils] SMTP login successful
-[mail_utils] Email sent to 1638933536@qq.com
-[mail_utils] SMTP connection closed
-[news_store] Marked 8 news as email_sent
-[news_mail] Email sent and news marked as sent
-[news_monitor] Cycle complete [off-hours]: fetched=20, new=20, matched=132, sent=8, next_interval=7200s
+支持股票涨跌幅监控 stock_signal_catcher
+
+# (1)函数接口 request_stock_15min_history 请求15分钟k线历史数据，并存储 csv 格式。
+函数写入文件 @scripts/signal_catcher/testcase/stock_get_15min_history_data.py
+## 输入：
+股票代码：例如 600893
+时间范围：输入参数 start_time, end_time，输入格式:yyyy-mm-dd
+
+## 输出:
+股票数据存储文件名：例如 600893_data.csv
+股票信息额外存储文件名: 600893_info.json
+额外存储文件信息中包含当前最新的 start_time, end_time。如果进行了多次拉取，那么对数据的时间范围进行合并。
+数据存储目录:/data/signal_catcher/
+
+## 函数内部逻辑:
+根据输入的股票代码，先读取 <code>_info.json 文件，看之前获取的时间区间。
+如果新的输入时间区间已在已获取的时间区间内，则直接打印日志然后返回。
+
+如果更新的输入时间不在范围内那么，需要补全成连续区间。
+例如，新的 end_time_new < 之前的 start_time_old，那么要获取新的 start_time_new 到原来的 start_time_old。
+例如，新的 start_time_new > 之前的 end_time_old，那么要获取原来的 end_time_old 到新的 end_time_new。
+将调整过后的 start_time_new 和 end_time_new 转换成 stock_zh_a_hist_min_em 能接受的 start_date 和 end_date 参数格式。
+使用 akshare 获取15分钟级别k线数据
+df = ak.stock_zh_a_hist_min_em(
+    symbol=stock_code,
+    period="15",
+    adjust="qfq",
+    start_date=start_date,
+    end_date=datetime.now().strftime("%Y-%m-%d")
+)
+
+将获取到的数据存储为 csv 文件，并更新 <code>_info.json 文件中的时间区间。
+可以参考样例代码 @scripts/code_sample.py
