@@ -4,7 +4,9 @@
       "Bash(python *)",
       "Bash(python3 *)",
       "Bash(chmod +x *)",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "Bash(git *)",
+      "Bash(/Users/mac/virtualenvs/venv_baostock/bin/python *)"
     ]
   }
 }
