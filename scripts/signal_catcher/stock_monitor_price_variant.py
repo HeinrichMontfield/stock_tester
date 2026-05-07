@@ -103,29 +103,28 @@ def _get_stock_short_name(stock_code):
     except Exception:
         pass
 
-    if not IS_SIMULATE_MODE:
-        try:
-            df = ak.stock_individual_info_em(symbol=stock_code)
-            row = df[df["item"] == "股票简称"]
-            if not row.empty:
-                short_name = str(row.iloc[0]["value"])
-                _stock_short_name_cache[stock_code] = short_name
-                try:
-                    with open(info_file, "r", encoding="utf-8") as f:
-                        info = json.load(f)
-                except Exception:
-                    info = {}
-                info["short_name"] = short_name
-                try:
-                    with open(info_file, "w", encoding="utf-8") as f:
-                        json.dump(info, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
-                return short_name
-        except Exception as e:
-            stock_logger.error(
-                "[short_name] Failed to fetch for %s: %s", stock_code, str(e)
-            )
+    try:
+        df = ak.stock_individual_info_em(symbol=stock_code)
+        row = df[df["item"] == "股票简称"]
+        if not row.empty:
+            short_name = str(row.iloc[0]["value"])
+            _stock_short_name_cache[stock_code] = short_name
+            try:
+                with open(info_file, "r", encoding="utf-8") as f:
+                    info = json.load(f)
+            except Exception:
+                info = {}
+            info["short_name"] = short_name
+            try:
+                with open(info_file, "w", encoding="utf-8") as f:
+                    json.dump(info, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+            return short_name
+    except Exception as e:
+        stock_logger.error(
+            "[short_name] Failed to fetch for %s: %s", stock_code, str(e)
+        )
 
     _stock_short_name_cache[stock_code] = stock_code
     return stock_code
