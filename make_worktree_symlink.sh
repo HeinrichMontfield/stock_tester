@@ -6,6 +6,7 @@
 # Usage:
 #   cd /path/to/worktree
 #   bash /path/to/original/make_worktree_symlink.sh
+# test change from wt2
 
 set -e
 
