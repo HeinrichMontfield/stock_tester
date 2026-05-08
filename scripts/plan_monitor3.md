@@ -336,3 +336,4 @@ alert_state = {
 **每日收盘重置**：
 收盘时（或下一交易日开盘前），清空所有股票的 `alert_state`（`last_alerted_level = None`, `over_5pct_flag = None`）。
 
+600893,600426,002179,600346,

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # 股票价格涨跌幅监控，支持模拟模式和实时模式。
-# 当股价相对当日开盘价涨跌幅超过阈值时，按阶梯档位发送告警邮件。
+# 当股价相对昨日收盘价涨跌幅超过阈值时，按阶梯档位发送告警邮件。
 
 import os
 import signal
@@ -64,6 +64,10 @@ DATA_SUBDIR = "signal_catcher"
 
 # 股票简称缓存，避免重复读取/请求
 _stock_short_name_cache = {}
+
+# 昨日收盘价缓存，当日不变，日期切换时清空
+_prev_close_cache = {}
+_prev_close_cache_date = None
 
 
 def _get_project_root():
@@ -232,8 +236,8 @@ def _request_realtime_data(stock_code):
         stock_logger.debug("[realtime] No data returned for stock=%s", stock_code)
         return None
 
-    # 将当日所有15分钟K线数据存入 MongoDB，确保首个蜡烛（含当日开盘价）始终可查。
-    # 解决只存最新一条导致 today_open 取到非首根蜡烛 open 的问题。
+    # 将当日所有15分钟K线数据存入 MongoDB，确保首根蜡烛始终可查。
+    # 解决只存最新一条导致历史数据缺失的问题。
     for _, row in df.iterrows():
         row_data = {
             "stock_code": stock_code,
@@ -303,29 +307,29 @@ def save_15min_data_to_mongo(data_dict):
             client.close()
 
 
-def _get_today_open(stock_code, data_dict, query_date=None):
-    """获取当日开盘价。
+def _get_prev_close(stock_code, data_dict, query_date=None):
+    """获取昨日收盘价。
 
     Args:
         stock_code: 股票代码
         data_dict: 请求到的当前数据条
         query_date: 查询日期（yyyy-mm-dd），模拟模式传入当前时间戳的日期，
-                    避免数据日期与查询日期不一致时取到错误的开盘价
+                    避免数据日期与查询日期不一致时取到错误的昨收价
 
     Returns:
-        float | None: 当日开盘价
+        float | None: 昨日收盘价
     """
     if IS_SIMULATE_MODE:
-        return _get_today_open_from_csv(stock_code, data_dict, query_date)
+        return _get_prev_close_from_csv(stock_code, data_dict, query_date)
     else:
-        return _get_today_open_realtime(stock_code, data_dict)
+        return _get_prev_close_realtime(stock_code, data_dict)
 
 
-def _get_today_open_from_csv(stock_code, data_dict, query_date=None):
+def _get_prev_close_from_csv(stock_code, data_dict, query_date=None):
     data_dir = _get_data_dir()
     csv_file = os.path.join(data_dir, f"{stock_code}_data.csv")
     # 优先使用 query_date（查询时间戳的日期），避免模拟模式下跨日期时
-    # 数据仍是前一日但 query_date 已是新日期，取到错误的开盘价
+    # 数据仍是前一日但 query_date 已是新日期，取到错误的昨收价
     data_date = query_date if query_date else data_dict["datetime"][:10]
     try:
         df = pd.read_csv(csv_file)
@@ -334,86 +338,70 @@ def _get_today_open_from_csv(stock_code, data_dict, query_date=None):
         df_today = df[df["datetime"].dt.strftime("%Y-%m-%d") == data_date]
         if df_today.empty:
             stock_logger.debug(
-                "[today_open] No CSV data for stock=%s on %s", stock_code, data_date,
+                "[prev_close] No CSV data for stock=%s on %s", stock_code, data_date,
             )
             return None
-        today_open = float(df_today.iloc[0]["open"])
+        prev_close = float(df_today.iloc[0]["open"])
         stock_logger.debug(
-            "[today_open] Got today_open=%s from CSV for stock=%s", today_open, stock_code,
+            "[prev_close] Got prev_close=%s from CSV for stock=%s", prev_close, stock_code,
         )
-        return today_open
+        return prev_close
     except Exception as e:
-        stock_logger.error("[today_open] Failed reading CSV %s: %s", csv_file, str(e))
+        stock_logger.error("[prev_close] Failed reading CSV %s: %s", csv_file, str(e))
         return None
 
 
-def _get_today_open_realtime(stock_code, data_dict):
-    """实时模式下获取当日开盘价：先查 MongoDB，没有再查 akshare。"""
-    data_date = data_dict["datetime"][:10]
-    # 先查 MongoDB
-    client = None
-    mongo_open = None
-    try:
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        client.admin.command("ping")
-        db = client[STOCK_DB_15MIN_NAME]
-        collection = db[STOCK_KLINE_15MIN_COLLECTION]
-        doc = collection.find_one(
-            {
-                "stock_code": stock_code,
-                "datetime": {"$regex": f"^{data_date}"},
-            },
-            sort=[("datetime", 1)],
+def _get_prev_close_realtime(stock_code, data_dict):
+    """实时模式下获取昨日收盘价：通过 stock_bid_ask_em 获取昨收，内存缓存。"""
+    global _prev_close_cache, _prev_close_cache_date
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # 日期切换时清空缓存
+    if _prev_close_cache_date != today:
+        _prev_close_cache.clear()
+        _prev_close_cache_date = today
+
+    # 命中缓存直接返回
+    if stock_code in _prev_close_cache:
+        stock_logger.debug(
+            "[prev_close] Got prev_close=%s from cache for stock=%s",
+            _prev_close_cache[stock_code], stock_code,
         )
-        if doc:
-            mongo_open = float(doc.get("open", 0))
-            stock_logger.debug(
-                "[today_open] Got today_open=%s from MongoDB for stock=%s", mongo_open, stock_code,
-            )
-    except Exception as e:
-        stock_logger.error("[today_open] MongoDB query failed for stock=%s: %s", stock_code, str(e))
-    finally:
-        if client:
-            client.close()
+        return _prev_close_cache[stock_code]
 
-    if mongo_open is not None:
-        return mongo_open
-
-    # 查 akshare
+    # 调用 stock_bid_ask_em 获取昨收
     try:
-        df = ak.stock_zh_a_hist_min_em(
-            symbol=stock_code,
-            period="15",
-            adjust="qfq",
-            start_date=data_date,
-            end_date=data_date,
+        df = ak.stock_bid_ask_em(symbol=stock_code)
+        prev_close = float(df[df["item"] == "昨收"]["value"].iloc[0])
+        _prev_close_cache[stock_code] = prev_close
+        stock_logger.debug(
+            "[prev_close] Got prev_close=%s from stock_bid_ask_em for stock=%s",
+            prev_close, stock_code,
         )
-        if df is not None and not df.empty:
-            today_open = float(df.iloc[0]["开盘"])
-            stock_logger.debug(
-                "[today_open] Got today_open=%s from akshare for stock=%s", today_open, stock_code,
-            )
-            return today_open
+        return prev_close
     except Exception as e:
-        stock_logger.error("[today_open] akshare query failed for stock=%s: %s", stock_code, str(e))
+        stock_logger.error(
+            "[prev_close] stock_bid_ask_em failed for stock=%s: %s", stock_code, str(e)
+        )
 
-    stock_logger.debug("[today_open] Failed to get today_open for stock=%s on %s", stock_code, data_date)
+    stock_logger.debug("[prev_close] Failed to get prev_close for stock=%s", stock_code)
     return None
 
 
-def check_price_variant(data_dict, today_open):
-    """计算涨跌幅百分比。
+def check_price_variant(data_dict, prev_close):
+    """计算相对昨日收盘价的涨跌幅百分比。
 
     Returns:
-        float | None: variant_pct，today_open 为 None 时返回 None
+        float | None: variant_pct，prev_close 为 None 时返回 None
     """
-    if today_open is None or today_open == 0:
+    if prev_close is None or prev_close == 0:
         return None
     close = data_dict["close"]
-    variant_pct = (close - today_open) / today_open * 100
+    variant_pct = (close - prev_close) / prev_close * 100
     stock_logger.debug(
-        "[variant] stock=%s, close=%s, today_open=%s, variant_pct=%.2f%%",
-        data_dict["stock_code"], close, today_open, variant_pct,
+        "[variant] stock=%s, close=%s, prev_close=%s, variant_pct=%.2f%%",
+        data_dict["stock_code"], close, prev_close, variant_pct,
     )
     return variant_pct
 
@@ -446,14 +434,14 @@ def _determine_current_level(variant_pct):
         return UP_ALERT_LEVELS[-1]
 
 
-def evaluate_alert(stock_code, variant_pct, alert_state, today_open):
+def evaluate_alert(stock_code, variant_pct, alert_state, prev_close):
     """根据阶梯告警规则判断是否需要发送告警邮件。
 
     Args:
         stock_code: 股票代码
         variant_pct: 当前涨跌幅百分比
         alert_state: 该股票当前的告警状态 dict
-        today_open: 当日开盘价
+        prev_close: 昨日收盘价
 
     Returns:
         tuple[str | None, dict]: (alert_reason, updated_alert_state)
@@ -502,12 +490,12 @@ def evaluate_alert(stock_code, variant_pct, alert_state, today_open):
                 alert_state["last_alerted_level"] = None
             return None, alert_state
 
-    # ---- 回归检查（回到开盘价1%以内） ----
+    # ---- 回归检查（回到昨收价1%以内） ----
     if over_flag == "down" and variant_pct > -1:
         old_flag = alert_state["over_5pct_flag"]
         alert_state["over_5pct_flag"] = None
         alert_state["last_alerted_level"] = None
-        reason = f"股价回归至开盘价1%%以内，当前涨跌幅 {variant_pct:+.2f}%%"
+        reason = f"股价回归至昨收价1%%以内，当前涨跌幅 {variant_pct:+.2f}%%"
         stock_logger.debug(
             "[alert] stock=%s regression from down, variant=%.2f%%, flag %s -> None",
             stock_code, variant_pct, old_flag,
@@ -517,7 +505,7 @@ def evaluate_alert(stock_code, variant_pct, alert_state, today_open):
         old_flag = alert_state["over_5pct_flag"]
         alert_state["over_5pct_flag"] = None
         alert_state["last_alerted_level"] = None
-        reason = f"股价回归至开盘价1%%以内，当前涨跌幅 {variant_pct:+.2f}%%"
+        reason = f"股价回归至昨收价1%%以内，当前涨跌幅 {variant_pct:+.2f}%%"
         stock_logger.debug(
             "[alert] stock=%s regression from up, variant=%.2f%%, flag %s -> None",
             stock_code, variant_pct, old_flag,
@@ -603,7 +591,7 @@ def evaluate_alert(stock_code, variant_pct, alert_state, today_open):
 
 
 def send_alert_email(stock_code, stock_short_name, alert_reason, variant_pct,
-                     data_dict, today_open):
+                     data_dict, prev_close):
     """发送告警邮件。
 
     Returns:
@@ -619,7 +607,7 @@ def send_alert_email(stock_code, stock_short_name, alert_reason, variant_pct,
         f"股票代码: {stock_code}",
         f"股票简称: {stock_short_name}",
         f"当前价格: {data_dict['close']}",
-        f"开盘价: {today_open}",
+        f"昨收价: {prev_close}",
         f"涨跌幅: {variant_pct:+.2f}%",
         f"告警原因: {alert_reason}",
         f"时间: {data_dict['datetime']}",
@@ -834,23 +822,23 @@ def _run_simulate_loop(alert_states):
             all_finished = False
             last_data_timestamps[stock_code] = current_timestamp
 
-            today_open = _get_today_open(stock_code, data,
+            prev_close = _get_prev_close(stock_code, data,
                                           query_date=current_timestamp.strftime("%Y-%m-%d"))
-            if today_open is None:
+            if prev_close is None:
                 continue
 
-            variant_pct = check_price_variant(data, today_open)
+            variant_pct = check_price_variant(data, prev_close)
             if variant_pct is None:
                 continue
 
             alert_reason, alert_states[stock_code] = evaluate_alert(
-                stock_code, variant_pct, alert_states[stock_code], today_open,
+                stock_code, variant_pct, alert_states[stock_code], prev_close,
             )
 
             if alert_reason is not None:
                 stock_short_name = _get_stock_short_name(stock_code)
                 send_alert_email(
-                    stock_code, stock_short_name, alert_reason, variant_pct, data, today_open,
+                    stock_code, stock_short_name, alert_reason, variant_pct, data, prev_close,
                 )
 
         if all_finished and len(finished_stocks) >= len(MONITOR_STOCK_CODES):
@@ -915,22 +903,22 @@ def _run_realtime_loop(alert_states):
 
                 save_15min_data_to_mongo(data)
 
-                today_open = _get_today_open(stock_code, data)
-                if today_open is None:
+                prev_close = _get_prev_close(stock_code, data)
+                if prev_close is None:
                     continue
 
-                variant_pct = check_price_variant(data, today_open)
+                variant_pct = check_price_variant(data, prev_close)
                 if variant_pct is None:
                     continue
 
                 alert_reason, alert_states[stock_code] = evaluate_alert(
-                    stock_code, variant_pct, alert_states[stock_code], today_open,
+                    stock_code, variant_pct, alert_states[stock_code], prev_close,
                 )
 
                 if alert_reason is not None:
                     stock_short_name = _get_stock_short_name(stock_code)
                     send_alert_email(
-                        stock_code, stock_short_name, alert_reason, variant_pct, data, today_open,
+                        stock_code, stock_short_name, alert_reason, variant_pct, data, prev_close,
                     )
             except Exception as e:
                 stock_logger.error(
