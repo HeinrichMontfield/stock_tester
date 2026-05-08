@@ -49,7 +49,7 @@ STOCK_KLINE_15MIN_COLLECTION = os.getenv("STOCK_KLINE_15MIN_COLLECTION", "stock_
 EMAIL = os.getenv("EMAIL")
 
 # ---------- 硬编码变量 ----------
-IS_SIMULATE_MODE = True
+IS_SIMULATE_MODE = False
 START_SIMULATION_TIMESTAMP = "2026-03-24 09:30:00"
 MONITOR_INTERVAL_MINUTES = 10
 SIMULATE_SPEED_MULTIPLIER = 200
@@ -231,6 +231,21 @@ def _request_realtime_data(stock_code):
     if df is None or df.empty:
         stock_logger.debug("[realtime] No data returned for stock=%s", stock_code)
         return None
+
+    # 将当日所有15分钟K线数据存入 MongoDB，确保首个蜡烛（含当日开盘价）始终可查。
+    # 解决只存最新一条导致 today_open 取到非首根蜡烛 open 的问题。
+    for _, row in df.iterrows():
+        row_data = {
+            "stock_code": stock_code,
+            "datetime": str(row["时间"]),
+            "open": float(row["开盘"]),
+            "high": float(row["最高"]),
+            "low": float(row["最低"]),
+            "close": float(row["收盘"]),
+            "volume": int(row["成交量"]),
+            "timestamp": str(row["时间"]),
+        }
+        save_15min_data_to_mongo(row_data)
 
     row = df.iloc[-1]
     stock_logger.debug(

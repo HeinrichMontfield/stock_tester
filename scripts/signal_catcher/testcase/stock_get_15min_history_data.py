@@ -195,8 +195,8 @@ def request_stock_15min_history(stock_code, start_time, end_time):
 if __name__ == "__main__":
     from scripts.utils import stock_logger_simple as stock_logger
 
-    STOCK_CODE = "600893"
-    START_DATE = "2026-01-01"
+    STOCK_CODE = "002545"
+    START_DATE = "2026-05-07"
     END_DATE = datetime.now().strftime("%Y-%m-%d")
 
     stock_logger.debug("=== Historical Data Fetch Service Started ===")
