@@ -590,41 +590,51 @@ def evaluate_alert(stock_code, variant_pct, alert_state, prev_close):
     return None, alert_state
 
 
-def send_alert_email(stock_code, stock_short_name, alert_reason, variant_pct,
-                     data_dict, prev_close):
-    """发送告警邮件。
+def send_batch_alert_email(alerts):
+    """合并多只股票的告警到一封邮件发送。
+
+    Args:
+        alerts: list of dict，每项包含 stock_code, stock_short_name, alert_reason,
+                variant_pct, data_dict, prev_close
 
     Returns:
         bool: 成功返回 True
     """
+    if not alerts:
+        return True
+
     from scripts.mail.mail_utils import send_email
 
-    subject = (
-        f"[Stock Alert] {stock_code}({stock_short_name}) "
-        f"price variant {variant_pct:+.2f}%"
-    )
-    body_lines = [
-        f"股票代码: {stock_code}",
-        f"股票简称: {stock_short_name}",
-        f"当前价格: {data_dict['close']}",
-        f"昨收价: {prev_close}",
-        f"涨跌幅: {variant_pct:+.2f}%",
-        f"告警原因: {alert_reason}",
-        f"时间: {data_dict['datetime']}",
-        f"最高价: {data_dict['high']}",
-        f"最低价: {data_dict['low']}",
-        f"成交量: {data_dict['volume']}",
-    ]
-    body = "\n".join(body_lines)
+    n = len(alerts)
+    codes = ", ".join(f"{a['stock_short_name']}" for a in alerts)
+    subject = f"[价格]{codes}"
+
+    body_parts = []
+    for i, a in enumerate(alerts):
+        if i > 0:
+            body_parts.append("---")
+        body_parts.extend([
+            f"股票代码: {a['stock_code']}",
+            f"股票简称: {a['stock_short_name']}",
+            f"当前价格: {a['data_dict']['close']}",
+            f"昨收价: {a['prev_close']}",
+            f"涨跌幅: {a['variant_pct']:+.2f}%",
+            f"告警原因: {a['alert_reason']}",
+            f"时间: {a['data_dict']['datetime']}",
+            f"最高价: {a['data_dict']['high']}",
+            f"最低价: {a['data_dict']['low']}",
+            f"成交量: {a['data_dict']['volume']}",
+        ])
+    body = "\n".join(body_parts)
 
     stock_logger.debug(
-        "[email] Sending alert for stock=%s, reason=%s, variant=%.2f%%, to=%s",
-        stock_code, alert_reason, variant_pct, EMAIL,
+        "[email] Sending batch alert for %d stock(s): %s, to=%s",
+        n, codes, EMAIL,
     )
     try:
         return send_email(subject, body, to_email=EMAIL)
     except Exception as e:
-        stock_logger.error("[email] Failed to send for stock=%s: %s", stock_code, str(e))
+        stock_logger.error("[email] Failed to send batch alert: %s", str(e))
         return False
 
 
@@ -801,6 +811,8 @@ def _run_simulate_loop(alert_states):
             )
 
         all_finished = True
+        # 收集本轮所有告警，合并为一封邮件发送
+        round_alerts = []
         for stock_code in MONITOR_STOCK_CODES:
             if _shutdown_requested:
                 break
@@ -837,9 +849,18 @@ def _run_simulate_loop(alert_states):
 
             if alert_reason is not None:
                 stock_short_name = _get_stock_short_name(stock_code)
-                send_alert_email(
-                    stock_code, stock_short_name, alert_reason, variant_pct, data, prev_close,
-                )
+                round_alerts.append({
+                    "stock_code": stock_code,
+                    "stock_short_name": stock_short_name,
+                    "alert_reason": alert_reason,
+                    "variant_pct": variant_pct,
+                    "data_dict": data,
+                    "prev_close": prev_close,
+                })
+
+        # 合并发送本轮所有告警
+        if round_alerts:
+            send_batch_alert_email(round_alerts)
 
         if all_finished and len(finished_stocks) >= len(MONITOR_STOCK_CODES):
             stock_logger.debug(
@@ -893,6 +914,8 @@ def _run_realtime_loop(alert_states):
         if now.strftime("%H:%M") >= MARKET_HOURS_END:
             _reset_alert_states(alert_states)
 
+        # 收集本轮所有告警，合并为一封邮件发送
+        round_alerts = []
         for stock_code in MONITOR_STOCK_CODES:
             if _shutdown_requested:
                 break
@@ -917,14 +940,23 @@ def _run_realtime_loop(alert_states):
 
                 if alert_reason is not None:
                     stock_short_name = _get_stock_short_name(stock_code)
-                    send_alert_email(
-                        stock_code, stock_short_name, alert_reason, variant_pct, data, prev_close,
-                    )
+                    round_alerts.append({
+                        "stock_code": stock_code,
+                        "stock_short_name": stock_short_name,
+                        "alert_reason": alert_reason,
+                        "variant_pct": variant_pct,
+                        "data_dict": data,
+                        "prev_close": prev_close,
+                    })
             except Exception as e:
                 stock_logger.error(
                     "[monitor] Unexpected error for stock=%s, mode=REAL: %s",
                     stock_code, str(e),
                 )
+
+        # 合并发送本轮所有告警
+        if round_alerts:
+            send_batch_alert_email(round_alerts)
 
         # 可中断的 sleep，每 1 秒检查一次退出标志
         for _ in range(int(MONITOR_INTERVAL_MINUTES * 60)):
