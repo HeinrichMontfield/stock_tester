@@ -5,6 +5,8 @@ share/
 data/
 worktree_share/
 scripts/data_analyzed
+scripts/log/**
+log/**
 pyvenv.cfg
 *.workspace
 

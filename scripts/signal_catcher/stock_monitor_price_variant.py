@@ -19,11 +19,112 @@ if not os.path.isabs(_log_folder):
     _project_root = os.path.dirname(os.path.dirname(_this_dir))
     os.environ["LOG_FOLDER"] = os.path.join(_project_root, _log_folder)
 
+# ---------- 规避东方财富限流：伪装浏览器 UA + Session 注入 ----------
+# 在 import akshare 之前 monkey-patch requests.get，使所有请求携带真
+# 实浏览器头。每 10 分钟自动轮换 UA 指纹，降低被识别为爬虫的概率。
+import time
+import random
+import requests
+
+# (User-Agent, sec-ch-ua, sec-ch-ua-platform, Accept-Language)
+# 仅保留 macOS 记录，避免 fingerprints 混用。
+_UA_RECORDS = [
+    # --- Chrome / macOS ---
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+        '"Chromium";v="132", "Not=A?Brand";v="99", "Google Chrome";v="132"',
+        '"macOS"',
+        "zh-CN,zh;q=0.9,en;q=0.8",
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        '"Chromium";v="131", "Not=A?Brand";v="99", "Google Chrome";v="131"',
+        '"macOS"',
+        "zh-CN,zh;q=0.9,en;q=0.8",
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        '"Chromium";v="130", "Not=A?Brand";v="99", "Google Chrome";v="130"',
+        '"macOS"',
+        "zh-CN,zh;q=0.9,en;q=0.8",
+    ),
+    # --- Firefox / macOS ---
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0",
+        None,
+        None,
+        "zh-CN,zh;q=0.9,en;q=0.8",
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0",
+        None,
+        None,
+        "zh-CN,zh;q=0.9,en;q=0.8",
+    ),
+    # --- Safari / macOS ---
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15",
+        None,
+        None,
+        "zh-CN,zh;q=0.9,en;q=0.8",
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
+        None,
+        None,
+        "zh-CN,zh;q=0.9,en;q=0.8",
+    ),
+]
+
+_session = None
+_last_ua_rotate = 0.0
+_UA_ROTATE_SECONDS = 600  # 10 分钟
+
+
+def _random_ua_record():
+    return random.choice(_UA_RECORDS)
+
+
+def _get_session():
+    """全局单例 Session，每 10 分钟轮换一次 UA 指纹"""
+    global _session, _last_ua_rotate
+    now = time.time()
+    if _session is None or (now - _last_ua_rotate) > _UA_ROTATE_SECONDS:
+        ua, sec_ch_ua, sec_ch_platform, accept_lang = _random_ua_record()
+        _session = requests.Session()
+        headers = {
+            "User-Agent": ua,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": accept_lang,
+            "Referer": "https://data.eastmoney.com/",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+        }
+        if sec_ch_ua is not None:
+            headers["sec-ch-ua"] = sec_ch_ua
+            headers["sec-ch-ua-mobile"] = "?0"
+            headers["sec-ch-ua-platform"] = sec_ch_platform
+        _session.headers.update(headers)
+        _last_ua_rotate = now
+    return _session
+
+
+# monkey-patch: 劫持 requests.get，使 akshare 内部所有请求都经过伪装 Session
+_original_get = requests.get
+
+
+def _patched_get(url, **kwargs):
+    kwargs.setdefault("timeout", 15)
+    return _get_session().get(url, **kwargs)
+
+
+requests.get = _patched_get
+
 import akshare as ak
 import pandas as pd
 import json
 import logging
-import time
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 
@@ -43,6 +144,8 @@ MARKET_HOURS_START = os.getenv("MARKET_HOURS_START", "09:00")
 MARKET_HOURS_MID_START = os.getenv("MARKET_HOURS_MID_START", "12:00")
 MARKET_HOURS_MID_END = os.getenv("MARKET_HOURS_MID_END", "13:00")
 MARKET_HOURS_END = os.getenv("MARKET_HOURS_END", "15:00")
+# 实时模式下首次抓取数据的时间，开盘初期数据不稳定，延迟到9:40再开始抓取
+FIRST_FETCH_START = os.getenv("FIRST_FETCH_START", "09:40")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 STOCK_DB_15MIN_NAME = os.getenv("STOCK_DB_15MIN_NAME", "stock_db_15min")
 STOCK_KLINE_15MIN_COLLECTION = os.getenv("STOCK_KLINE_15MIN_COLLECTION", "stock_kline_15min")
@@ -217,8 +320,45 @@ def _request_simulate_data(stock_code, timestamp):
     }
 
 
+# 轮级重试参数：东方财富限流基于 IP/Session 而非单只股票。
+# 若某只股票触发限流，整轮立即中止，等待退避后从失败股票恢复，
+# 避免对已限流 Session 连续发起 N×3 次无效重试。
+_ROUND_RETRY_DELAYS = [20, 40, 80]  # 第1/2/3次重试的固定等待秒数
+_ROUND_RETRY_JITTER = 10            # 每次重试叠加的随机秒数上限
+_ROUND_MAX_RETRIES = 3
+
+
+def _is_rate_limit_exception(exc):
+    """判断异常是否为东方财富限流所致。"""
+    msg = str(exc)
+    return any(kw in msg for kw in (
+        "RemoteDisconnected",
+        "ConnectionResetError",
+        "Connection aborted",
+        "Connection reset by peer",
+        "Read timed out",
+    ))
+
+
+def _force_session_rotate():
+    """限流后立即强制重建 Session（新 UA 指纹），不等 10 分钟自动轮换。"""
+    global _session, _last_ua_rotate
+    _session = None
+    _last_ua_rotate = 0.0
+    stock_logger.debug("[session] Force rotate on rate-limit, new session will be created")
+
+
+# 模块级标志：上一只股票请求是否因限流失败
+# _request_realtime_data 设置，_run_realtime_loop 读取并重置
+_last_rate_limited = False
+
+
 def _request_realtime_data(stock_code):
+    """单次请求，不重试。限流异常由调用方在轮级处理。"""
+    global _last_rate_limited
+    _last_rate_limited = False
     today = datetime.now().strftime("%Y-%m-%d")
+
     stock_logger.debug("[realtime] Fetching akshare data for stock=%s, date=%s", stock_code, today)
     try:
         df = ak.stock_zh_a_hist_min_em(
@@ -230,6 +370,9 @@ def _request_realtime_data(stock_code):
         )
     except Exception as e:
         stock_logger.error("[realtime] akshare request failed for stock=%s: %s", stock_code, str(e))
+        if _is_rate_limit_exception(e):
+            _last_rate_limited = True
+            stock_logger.debug("[realtime] Rate-limit detected for stock=%s", stock_code)
         return None
 
     if df is None or df.empty:
@@ -294,10 +437,10 @@ def save_15min_data_to_mongo(data_dict):
             stock_logger.debug(
                 "[mongo] Inserted stock=%s, datetime=%s", data_dict["stock_code"], data_dict["datetime"],
             )
-        else:
-            stock_logger.debug(
-                "[mongo] Skipped duplicate stock=%s, datetime=%s", data_dict["stock_code"], data_dict["datetime"],
-            )
+        # else:
+        #     stock_logger.debug(
+        #         "[mongo] Skipped duplicate stock=%s, datetime=%s", data_dict["stock_code"], data_dict["datetime"],
+        #     )
         return True
     except Exception as e:
         stock_logger.error("[mongo] Write failed: %s", str(e))
@@ -816,6 +959,8 @@ def _run_simulate_loop(alert_states):
         for stock_code in MONITOR_STOCK_CODES:
             if _shutdown_requested:
                 break
+            # 请求间加入随机延迟，避免高频请求触发东方财富限流
+            time.sleep(random.uniform(0.5, 1.5))
             if stock_code in finished_stocks:
                 continue
 
@@ -886,9 +1031,58 @@ def _run_simulate_loop(alert_states):
                 time.sleep(1)
 
 
+def _process_stock_data(data, alert_states, round_alerts):
+    """处理单只股票数据：保存 Mongo、计算涨跌幅、评估告警。"""
+    stock_code = data["stock_code"]
+    save_15min_data_to_mongo(data)
+
+    prev_close = _get_prev_close(stock_code, data)
+    if prev_close is None:
+        return
+
+    variant_pct = check_price_variant(data, prev_close)
+    if variant_pct is None:
+        return
+
+    alert_reason, alert_states[stock_code] = evaluate_alert(
+        stock_code, variant_pct, alert_states[stock_code], prev_close,
+    )
+
+    if alert_reason is not None:
+        stock_short_name = _get_stock_short_name(stock_code)
+        round_alerts.append({
+            "stock_code": stock_code,
+            "stock_short_name": stock_short_name,
+            "alert_reason": alert_reason,
+            "variant_pct": variant_pct,
+            "data_dict": data,
+            "prev_close": prev_close,
+        })
+
+
+def _send_round_failure_email(failed_stocks):
+    """轮级重试耗尽后仍失败时，发送通知邮件告知本轮抓取异常。"""
+    from scripts.mail.mail_utils import send_email
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    names = ", ".join(_get_stock_short_name(c) for c in failed_stocks)
+    codes = ", ".join(failed_stocks)
+    subject = f"[监控异常] 本轮请求失败 - {now_str}"
+    body = (
+        f"本轮监控（10分钟级别）以下股票在 {_ROUND_MAX_RETRIES} 次重试后仍请求失败：\n\n"
+        f"失败股票: {names} ({codes})\n"
+        f"失败时间: {now_str}\n"
+        f"重试间隔: {_ROUND_RETRY_DELAYS}\n\n"
+        f"可能原因：东方财富 API 持续限流或网络异常。"
+    )
+    stock_logger.debug("[email] Sending round failure alert for %d stock(s): %s", len(failed_stocks), names)
+    send_email(subject, body)
+
+
 def _run_realtime_loop(alert_states):
     last_market_date = None
     was_in_market = False
+    _first_fetch_wait_logged = False
 
     while True:
         if _shutdown_requested:
@@ -914,49 +1108,87 @@ def _run_realtime_loop(alert_states):
         if now.strftime("%H:%M") >= MARKET_HOURS_END:
             _reset_alert_states(alert_states)
 
-        # 收集本轮所有告警，合并为一封邮件发送
+        # 开盘初期数据不稳定，等待到 FIRST_FETCH_START 再开始抓取
+        if now.strftime("%H:%M") < FIRST_FETCH_START:
+            if not _first_fetch_wait_logged:
+                stock_logger.debug(
+                    "[monitor] Before first fetch time %s, waiting...", FIRST_FETCH_START
+                )
+                _first_fetch_wait_logged = True
+            for _ in range(60):
+                if _shutdown_requested:
+                    break
+                time.sleep(1)
+            continue
+
+        _first_fetch_wait_logged = False
+
+        # 收集本轮所有告警，合并为一封邮件发送。
+        # 轮级重试：若某只股票触发限流，立即中止本轮剩余股票，
+        # 退避后从失败股票恢复，避免对已限流 Session 级联失败。
         round_alerts = []
-        for stock_code in MONITOR_STOCK_CODES:
+        round_failed_stocks = []  # 本轮重试耗尽后仍失败的股票
+        stock_idx = 0
+        retry_attempt = 0
+
+        while stock_idx < len(MONITOR_STOCK_CODES):
             if _shutdown_requested:
                 break
+
+            stock_code = MONITOR_STOCK_CODES[stock_idx]
+
+            # 非重试时才加股票间延迟（重试是对同一只股票，不需额外间隔）
+            if retry_attempt == 0:
+                time.sleep(random.uniform(0.5, 1.5))
+
             try:
                 data = request_stock_15min_data(stock_code)
-                if data is None:
-                    continue
 
-                save_15min_data_to_mongo(data)
+                if data is not None:
+                    # 成功：保存数据、计算告警
+                    _process_stock_data(data, alert_states, round_alerts)
+                    stock_idx += 1
+                    retry_attempt = 0
+                elif _last_rate_limited:
+                    # 限流：立即中止本轮，退避重试
+                    _force_session_rotate()
+                    if retry_attempt < _ROUND_MAX_RETRIES:
+                        wait = _ROUND_RETRY_DELAYS[retry_attempt] + random.uniform(0, _ROUND_RETRY_JITTER)
+                        stock_logger.debug(
+                            "[monitor] Round hit rate-limit at stock=%s, retry=%d/%d, waiting %.1fs",
+                            stock_code, retry_attempt + 1, _ROUND_MAX_RETRIES, wait,
+                        )
+                        time.sleep(wait)
+                        retry_attempt += 1
+                        # 不推进 stock_idx，重试同一只股票
+                    else:
+                        stock_logger.debug(
+                            "[monitor] Round retries exhausted for stock=%s, skipping", stock_code,
+                        )
+                        round_failed_stocks.append(stock_code)
+                        stock_idx += 1
+                        retry_attempt = 0
+                else:
+                    # 无数据（非限流），跳过继续
+                    stock_logger.debug("[monitor] No data for stock=%s, skipping", stock_code)
+                    stock_idx += 1
+                    retry_attempt = 0
 
-                prev_close = _get_prev_close(stock_code, data)
-                if prev_close is None:
-                    continue
-
-                variant_pct = check_price_variant(data, prev_close)
-                if variant_pct is None:
-                    continue
-
-                alert_reason, alert_states[stock_code] = evaluate_alert(
-                    stock_code, variant_pct, alert_states[stock_code], prev_close,
-                )
-
-                if alert_reason is not None:
-                    stock_short_name = _get_stock_short_name(stock_code)
-                    round_alerts.append({
-                        "stock_code": stock_code,
-                        "stock_short_name": stock_short_name,
-                        "alert_reason": alert_reason,
-                        "variant_pct": variant_pct,
-                        "data_dict": data,
-                        "prev_close": prev_close,
-                    })
             except Exception as e:
                 stock_logger.error(
                     "[monitor] Unexpected error for stock=%s, mode=REAL: %s",
                     stock_code, str(e),
                 )
+                stock_idx += 1
+                retry_attempt = 0
 
         # 合并发送本轮所有告警
         if round_alerts:
             send_batch_alert_email(round_alerts)
+
+        # 本轮有股票重试耗尽后仍失败，发送通知邮件
+        if round_failed_stocks:
+            _send_round_failure_email(round_failed_stocks)
 
         # 可中断的 sleep，每 1 秒检查一次退出标志
         for _ in range(int(MONITOR_INTERVAL_MINUTES * 60)):
