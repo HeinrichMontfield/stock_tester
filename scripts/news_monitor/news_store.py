@@ -8,8 +8,13 @@ from scripts.utils import stock_logger
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
-DB_NAME = os.getenv("SINA_NEWS_DB_NAME")
-COLLECTION_NAME = os.getenv("SINA_NEWS_COLLECTION_NAME")
+NEWS_SOURCE = os.getenv("NEWS_SOURCE", "sina")
+if NEWS_SOURCE == "cls":
+    DB_NAME = os.getenv("CLS_NEWS_DB_NAME", "stock_news_cls")
+    COLLECTION_NAME = os.getenv("CLS_NEWS_COLLECTION_NAME", "news_articles_cls")
+else:
+    DB_NAME = os.getenv("SINA_NEWS_DB_NAME", "stock_news")
+    COLLECTION_NAME = os.getenv("SINA_NEWS_COLLECTION_NAME", "news_articles")
 
 
 def _get_collection():
@@ -73,6 +78,10 @@ def save_news(news_item: dict, keywords: list[str]) -> bool:
         "matched_keywords": matched,
         "email_sent": False,
     }
+    title = news_item.get("title", "")
+    if title:
+        # CLS新闻有独立标题字段，保存到MongoDB
+        doc["title"] = title
 
     client, col = _get_collection()
     try:

@@ -3,6 +3,7 @@
 import logging
 import logging.handlers
 import os
+import re
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -26,6 +27,14 @@ _log_filename = f"stock_{_startup_ts}.log"
 _logger = logging.getLogger("stock")
 _logger.setLevel(logging.DEBUG)
 
+# 自定义滚动命名：将默认的 stock_xxx.log.2026-05-11 改为 stock_xxx_20260511.log
+def _rotating_namer(default_name: str) -> str:
+    m = re.match(r"(.+)\.log\.(\d{4}-\d{2}-\d{2})$", default_name)
+    if m:
+        return f"{m.group(1)}_{m.group(2).replace('-', '')}.log"
+    return default_name
+
+
 if not _logger.handlers:
     _handler = logging.handlers.TimedRotatingFileHandler(
         os.path.join(LOG_FOLDER, _log_filename),
@@ -34,6 +43,7 @@ if not _logger.handlers:
         backupCount=30,
         encoding="utf-8",
     )
+    _handler.namer = _rotating_namer
     _handler.setLevel(logging.DEBUG)
     _handler.setFormatter(
         logging.Formatter(

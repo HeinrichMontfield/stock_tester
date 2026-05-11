@@ -9,8 +9,13 @@ from scripts.utils import stock_logger
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
-DB_NAME = os.getenv("SINA_NEWS_DB_NAME")
-COLLECTION_NAME = os.getenv("SINA_NEWS_COLLECTION_NAME")
+NEWS_SOURCE = os.getenv("NEWS_SOURCE", "sina")
+if NEWS_SOURCE == "cls":
+    DB_NAME = os.getenv("CLS_NEWS_DB_NAME", "stock_news_cls")
+    COLLECTION_NAME = os.getenv("CLS_NEWS_COLLECTION_NAME", "news_articles_cls")
+else:
+    DB_NAME = os.getenv("SINA_NEWS_DB_NAME", "stock_news")
+    COLLECTION_NAME = os.getenv("SINA_NEWS_COLLECTION_NAME", "news_articles")
 
 
 def search_stock_news(keyword: str, start_time: str, end_time: str) -> list[str]:
