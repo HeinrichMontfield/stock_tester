@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import os
 
 import pandas as pd
@@ -75,7 +76,7 @@ def _fetch_news_cls() -> list[dict]:
         return []
 
     news_list = []
-    for i, (_, row) in enumerate(df.iterrows()):
+    for _, row in df.iterrows():
         title = str(row.get("标题", "")).strip() if not pd.isna(row.get("标题", "")) else ""
         content = str(row.get("内容", "")).strip() if not pd.isna(row.get("内容", "")) else ""
 
@@ -99,7 +100,11 @@ def _fetch_news_cls() -> list[dict]:
             continue
 
         time_str = news_time.strftime("%Y-%m-%d-%H-%M-%S")
-        news_id = f"cls_{time_str}_{i}"
+        # 使用 title+content 的 hash 作为 ID 一部分，避免同一篇新闻在 API 返回中
+        # 出现在不同行号时被当作不同新闻重复入库
+        unique_str = (title + content)[:200]
+        content_hash = hashlib.md5(unique_str.encode()).hexdigest()[:10]
+        news_id = f"cls_{time_str}_{content_hash}"
 
         news_list.append({
             "id": news_id,
