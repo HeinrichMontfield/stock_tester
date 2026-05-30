@@ -70,7 +70,12 @@ def save_news(news_item: dict, keywords: list[str]) -> bool:
         stock_logger.debug("[news_store] Skipping empty content for %s", news_item.get('id'))
         return False
 
-    matched = [kw for kw in keywords if kw in content]
+    # 只归属到第一个命中关键词，避免同一新闻在多个关键词下重复发送
+    matched = []
+    for kw in keywords:
+        if kw in content:
+            matched = [kw]
+            break
     doc = {
         "_id": news_item["id"],
         "time": news_item["time"],
@@ -204,7 +209,12 @@ def reindex_all_keywords(keywords: list[str]) -> None:
         cursor = col.find({}, {"_id": 1, "content": 1})
         updated = 0
         for doc in cursor:
-            matched = [kw for kw in keywords if kw in doc.get("content", "")]
+            # 只归属到第一个命中关键词，避免同一新闻在多个关键词下重复发送
+            matched = []
+            for kw in keywords:
+                if kw in doc.get("content", ""):
+                    matched = [kw]
+                    break
             col.update_one({"_id": doc["_id"]}, {"$set": {"matched_keywords": matched}})
             updated += 1
         stock_logger.debug("[news_store] Reindexed matched_keywords for %d documents", updated)
